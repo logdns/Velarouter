@@ -6,7 +6,70 @@
   <meta name="description" content="Velarouter 是局域网优先的加密远程桌面，支持 macOS、Windows 和 Linux。">
   <title>Velarouter · 加密远程桌面</title>
   <link rel="icon" href="icon.png">
-  <link rel="stylesheet" href="style.css">
+  <!-- Keep this small stylesheet with the markup so cached CSS cannot break a fresh Pages deployment. -->
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f2f4fa;
+      --surface: #fff;
+      --text: #171b2f;
+      --muted: #46516d;
+      --border: #d8deec;
+      --accent: #3948bf;
+      font-family: system-ui, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #151827;
+        --surface: #1f2334;
+        --text: #f2f4ff;
+        --muted: #bac4e0;
+        --border: #3c445e;
+        --accent: #b8c1ff;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; line-height: 1.65; }
+    a { color: var(--accent); text-underline-offset: .2em; }
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: .3rem; }
+    img { display: block; max-inline-size: 100%; }
+    .page { inline-size: min(100% - 2rem, 64rem); margin-inline: auto; }
+    .hero { padding-block: clamp(1.5rem, 5vw, 3rem) 1rem; }
+    .brand, .links { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+    .brand { font-size: 1.75rem; font-weight: 750; margin-block: 0 1rem; }
+    h1 { margin: 0; font-size: clamp(1.75rem, 1.25rem + 3vw, 3.75rem); line-height: 1.2; }
+    h2 { margin-block: 0 .85rem; font-size: 1.35rem; }
+    h3 { margin-block: 0 .4rem; font-size: 1.12rem; }
+    p, li { overflow-wrap: anywhere; }
+    .intro { max-inline-size: 38rem; color: var(--muted); }
+    .links { margin-block-start: 1.35rem; }
+    .links a { padding: .55rem .9rem; border: 1px solid var(--border); border-radius: .65rem; }
+    .links .download { background: #3948bf; border-color: #3948bf; color: #fff; font-weight: 650; }
+    .preview { margin: 0; }
+    .preview-image { display: block; }
+    .preview img {
+      inline-size: 100%;
+      block-size: auto;
+      border: 1px solid var(--border);
+      border-radius: .75rem;
+      box-shadow: 0 .5rem 1.5rem rgb(17 24 39 / .08);
+    }
+    .preview figcaption { margin-block-start: .65rem; color: var(--muted); font-size: .9rem; }
+    .compact-preview { margin-block-start: 1rem; }
+    .compact-preview summary { padding-block: .4rem; color: var(--accent); cursor: pointer; }
+    .compact-preview summary:focus-visible { outline: 2px solid var(--accent); outline-offset: .15rem; }
+    .compact-preview .preview { max-inline-size: 26.875rem; margin-block-start: .6rem; }
+    .platforms { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: .85rem; list-style: none; margin: 0; padding: 0; }
+    .platforms li { padding: 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: .8rem; }
+    .platforms p { margin: 0; color: var(--muted); }
+    section { margin-block: clamp(1.5rem, 3vw, 2.75rem); }
+    ol { padding-inline-start: 1.5rem; }
+    footer { border-block-start: 1px solid var(--border); padding-block: 1rem 2rem; color: var(--muted); }
+  </style>
 </head>
 <body>
   <main class="page">
@@ -21,23 +84,23 @@
     </header>
     <section aria-labelledby="screenshots">
       <h2 id="screenshots">客户端截图</h2>
-      <div class="screenshots">
-        <figure>
-          <a href="screenshots/desktop-home.png">
-            <img src="screenshots/desktop-home.png" width="1100" height="522" fetchpriority="high"
-                 alt="Velarouter 桌面首页：左侧显示本机共享信息，右侧是连接表单">
-          </a>
-          <figcaption>宽窗口：共享与连接并排显示</figcaption>
-        </figure>
-        <figure>
-          <a href="screenshots/desktop-compact.png">
+      <figure class="preview">
+        <a class="preview-image" href="screenshots/desktop-home.png" aria-label="查看宽窗口截图原图">
+          <img src="screenshots/desktop-home.png" width="1100" height="522" fetchpriority="high"
+               alt="Velarouter 桌面首页：左侧显示本机共享信息，右侧是连接表单">
+        </a>
+        <figcaption>宽窗口：共享与连接并排显示。图中为演示设备与联机码。</figcaption>
+      </figure>
+      <details class="compact-preview">
+        <summary>查看窄窗口截图</summary>
+        <figure class="preview">
+          <a class="preview-image" href="screenshots/desktop-compact.png" aria-label="查看窄窗口截图原图">
             <img src="screenshots/desktop-compact.png" width="430" height="452" loading="lazy"
-                 alt="Velarouter 窄窗口：顶部有本机共享、连接电脑和局域网页签，当前显示连接表单">
+                 alt="Velarouter 窄窗口：在顶部页签中选中「连接电脑」，下方显示连接表单">
           </a>
-          <figcaption>窄窗口：使用顶部页签切换</figcaption>
+          <figcaption>窄窗口：通过顶部页签切换共享、连接和局域网。</figcaption>
         </figure>
-      </div>
-      <p class="screenshot-note">截图使用演示设备和联机码。点击截图可查看原图。</p>
+      </details>
     </section>
     <section aria-labelledby="install">
       <h2 id="install">选择你的系统</h2>
