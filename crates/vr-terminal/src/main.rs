@@ -18,7 +18,11 @@ const CAPTURE_HEIGHT: u16 = 540;
 const CAPTURE_FPS: u8 = 5;
 
 #[derive(Parser)]
-#[command(version, about = "使用联机码在终端只读预览 Velarouter 远程桌面")]
+#[command(
+    name = "velarouter-view",
+    version,
+    about = "使用联机码在终端只读预览 Velarouter 远程桌面"
+)]
 struct Args {
     /// 对方的联机码：VR-…、12 位互联网码或自建信令的 9 位码
     code: String,
