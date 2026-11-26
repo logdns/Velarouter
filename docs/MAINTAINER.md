@@ -17,6 +17,8 @@
 
 ## 当前交付范围
 
+已发布版本的 Actions、审计、校验和及站点部署证据见[核验记录](releases/VERIFICATION.md)。
+
 - `velarouter-desktop`：桌面主控／被控；`velarouter-view`：终端只读；`velarouter`：运维与诊断。移动浏览器使用被控端的局域网页面。
 - 自动化：四路桌面墙 Xvfb、合成 PulseAudio、密码及可信设备校验、共享目录传输、跨语言已知答案向量。Windows／macOS／Linux 安装包测试不替代现场桌面操作验证。
 - 尚需真机：异构桌面双向连接，Wayland 授权，iOS Safari 与 Android Chrome，四台实机并发及跨 NAT。H.264 分发许可及专利未评审，Linux 音频仍为试验。AV1、HEVC、硬编、原生移动应用和登录前远控不计入本版完成项。
