@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 vr-proto = { path = "../vr-proto" }
+vr-crypto = { path = "../vr-crypto" }
 vr-session = { path = "../vr-session" }
 vr-p2p = { path = "../vr-p2p" }
 vr-meet = { path = "../vr-meet" }

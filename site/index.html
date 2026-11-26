@@ -80,6 +80,7 @@
       <nav class="links" aria-label="项目链接">
         <a class="download" href="https://github.com/logdns/Velarouter/releases/latest">下载最新版</a>
         <a href="https://github.com/logdns/Velarouter">GitHub 仓库</a>
+        <a href="https://github.com/logdns/Velarouter/blob/main/docs/README.md">文档与部署</a>
       </nav>
     </header>
     <section aria-labelledby="screenshots">
@@ -110,6 +111,15 @@
         <li><h3>Linux</h3><p>x86_64 / ARM64。Ubuntu / Debian 优先安装 DEB；使用 TAR.GZ 时，解包后运行 <code>./install.sh</code>。安装后从应用菜单启动。</p></li>
       </ul>
     </section>
+    <section aria-labelledby="clients">
+      <h2 id="clients">选用哪种客户端</h2>
+      <ul class="platforms">
+        <li><h3>桌面</h3><p>键鼠、剪贴板、多屏与文件传输。0.1.2 加入最近连接、可选可信设备及最多四路的只读桌面墙。</p></li>
+        <li><h3>手机浏览器</h3><p>在同一可信局域网打开被控端给出的 Web 地址，使用单指操作。这里是项目主页，不是远控入口。</p></li>
+        <li><h3>终端</h3><p>0.1.2 安装包附带 <code>velarouter-view</code>。适合只读预览，不会发送键鼠或保存画面。</p></li>
+      </ul>
+      <p>标准安装包使用 JPEG。H.264 和 Linux 系统声音仅供源码构建试验。<a href="https://github.com/logdns/Velarouter/blob/main/docs/releases/v0.1.2.md">查看 0.1.2 版本说明</a>。</p>
+    </section>
     <section aria-labelledby="connect">
       <h2 id="connect">怎么连接</h2>
       <ol>
@@ -119,7 +129,11 @@
       </ol>
       <p>部分网络无法跨网直连，默认不会自动中继。<a href="https://github.com/logdns/Velarouter/blob/main/docs/clients/DESKTOP-APP.md">查看权限设置和排障指南</a>。</p>
     </section>
-    <footer>Velarouter · <a href="https://github.com/logdns/Velarouter/blob/main/LICENSE">Apache-2.0</a></footer>
   </main>
+  <footer class="page">
+    Velarouter · <a href="https://github.com/logdns/Velarouter/blob/main/LICENSE">Apache-2.0</a>
+    · <a href="https://github.com/logdns/Velarouter/blob/main/docs/DEPLOYMENT.md">自建信令</a>
+    · <a href="https://github.com/logdns/Velarouter/blob/main/docs/SECURITY.md">安全说明</a>
+  </footer>
 </body>
 </html>

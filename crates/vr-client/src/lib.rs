@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use vr_crypto::DeviceSigningKey;
 use vr_proto::{Capabilities, Control, VideoConfig};
 use vr_session::{Peer, Session, SessionReceiver, SessionSender, WsChannel};
 use vr_transport::MessageChannel;
@@ -57,13 +58,24 @@ pub async fn connect_lan(
     app: &str,
     caps: Capabilities,
 ) -> Result<Viewer> {
+    connect_lan_with_identity(url, pairing_code, app, caps, None).await
+}
+
+pub async fn connect_lan_with_identity(
+    url: &str,
+    pairing_code: &str,
+    app: &str,
+    caps: Capabilities,
+    identity: Option<&DeviceSigningKey>,
+) -> Result<Viewer> {
     let session_id = uuid::Uuid::new_v4().to_string();
     let channel = WsChannel::connect(url)
         .await
         .with_context(|| format!("cannot connect to {url}"))?;
-    let session = Session::connect(
+    let session = Session::connect_with_identity(
         Box::new(channel) as Box<dyn MessageChannel>,
         config(session_id.clone(), pairing_code.to_string(), app, caps),
+        identity,
     )
     .await
     .context("LAN handshake failed")?;
@@ -83,6 +95,17 @@ pub async fn connect_p2p(
     password: &str,
     app: &str,
     caps: Capabilities,
+) -> Result<Viewer> {
+    connect_p2p_with_identity(signal_base, device_code, password, app, caps, None).await
+}
+
+pub async fn connect_p2p_with_identity(
+    signal_base: &str,
+    device_code: &str,
+    password: &str,
+    app: &str,
+    caps: Capabilities,
+    identity: Option<&DeviceSigningKey>,
 ) -> Result<Viewer> {
     let base = signal_base.trim_end_matches('/').to_string();
     let http = reqwest::Client::builder()
@@ -123,9 +146,10 @@ pub async fn connect_p2p(
     .await
     .context("QUIC connect timeout")??;
 
-    let session = Session::connect(
+    let session = Session::connect_with_identity(
         Box::new(channel) as Box<dyn MessageChannel>,
         config(resp.token.clone(), password.to_string(), app, caps),
+        identity,
     )
     .await
     .context("P2P handshake failed (wrong password?)")?;
@@ -141,6 +165,17 @@ pub async fn connect_meet(
     brokers: &[String],
     app: &str,
     caps: Capabilities,
+) -> Result<Viewer> {
+    connect_meet_with_identity(code, password, brokers, app, caps, None).await
+}
+
+pub async fn connect_meet_with_identity(
+    code: &str,
+    password: &str,
+    brokers: &[String],
+    app: &str,
+    caps: Capabilities,
+    identity: Option<&DeviceSigningKey>,
 ) -> Result<Viewer> {
     // The host stops announcing while it serves a session, and a session whose
     // viewer died lingers until the QUIC idle timeout. So instead of a couple of
@@ -186,9 +221,10 @@ pub async fn connect_meet(
                 continue;
             }
         };
-        let session = Session::connect(
+        let session = Session::connect_with_identity(
             Box::new(channel) as Box<dyn MessageChannel>,
             config(peer.session.clone(), password.to_string(), app, caps),
+            identity,
         )
         .await
         .context("P2P handshake failed (wrong password?)")?;

@@ -1,13 +1,8 @@
-//! What the user may type into "对方的联机码".
-//!
-//! Three forms exist, and they must be unambiguous because a wrong guess costs
-//! a failed connection:
-//!
-//! * `VR-…` — a LAN code: the code *is* the address, no lookup at all;
-//! * `0…` (12 digits) — a public IPv4/port encoded directly;
-//! * any other 12 digits — a rendezvous code: the broker path finds the peer.
+//! Shared parser for the existing desktop and terminal connection codes.
+//! Supports VR/VR6 address codes, the legacy 12-digit IPv4 code, 12-digit
+//! rendezvous codes, and 9-digit self-hosted signal codes. No raw addresses.
+use crate::direct::decode_internet_direct;
 use std::net::{Ipv6Addr, SocketAddr};
-use vr_net::direct::decode_internet_direct;
 use vr_proto::{is_internet_code, DEFAULT_AGENT_PORT};
 
 #[derive(Debug, PartialEq)]
@@ -72,7 +67,7 @@ pub fn parse(input: &str) -> Result<Destination, &'static str> {
         return Ok(Destination::Meet(code));
     }
     // LAN code: `VR-XXXXXX` decodes to address + port.
-    match vr_net::direct::decode(&code) {
+    match crate::direct::decode(&code) {
         Ok(addr) => Ok(Destination::Direct(addr.into())),
         Err(_) => Err("联机码格式不对：应为 12 位数字，或 VR- 开头的局域网码。"),
     }
@@ -103,9 +98,25 @@ mod tests {
     }
 
     #[test]
+    fn accepts_only_connection_codes() {
+        let addr: std::net::SocketAddrV4 = "192.0.2.10:34789".parse().unwrap();
+        assert_eq!(
+            parse(&crate::direct::encode(addr)),
+            Ok(Destination::Direct(addr.into()))
+        );
+        assert_eq!(
+            parse("123 456 789"),
+            Ok(Destination::Signal("123456789".into()))
+        );
+        for address in ["192.0.2.10", "192.0.2.10:34789", "[2001:db8::1]:34789"] {
+            assert!(parse(address).is_err(), "raw address accepted: {address}");
+        }
+    }
+
+    #[test]
     fn public_direct_code_roundtrips() {
         let v4 = std::net::SocketAddrV4::new(std::net::Ipv4Addr::new(8, 8, 4, 4), 34789);
-        let code = vr_net::direct::internet_direct_code(v4, DEFAULT_AGENT_PORT).unwrap();
+        let code = crate::direct::internet_direct_code(v4, DEFAULT_AGENT_PORT).unwrap();
         assert_eq!(parse(&code), Ok(Destination::Direct(SocketAddr::V4(v4))));
     }
 }

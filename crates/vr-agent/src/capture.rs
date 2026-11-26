@@ -1,10 +1,9 @@
-//! Screen capture and JPEG encoding.
+//! Screen capture with JPEG by default and optional software H.264.
 //!
 //! The reference agent uses a **software JPEG pipeline**. It is not the fastest
 //! possible encoder, but it is the only one that works unchanged on Windows,
 //! macOS, Linux, Android and iOS, and it lets a browser viewer decode with
-//! `createImageBitmap` alone. Hardware codecs plug in through [`Encoder`] — see
-//! the platform client docs for the H.264/HEVC/AV1 backends.
+//! `createImageBitmap` alone. H.264 is an opt-in desktop experiment.
 
 use std::io::Cursor;
 use std::time::{Duration, Instant};
@@ -12,14 +11,17 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use image::codecs::jpeg::JpegEncoder;
 use image::{imageops, DynamicImage, ImageFormat, RgbaImage};
-use vr_proto::DisplayInfo;
+use vr_proto::{Codec, DisplayInfo};
 
 /// One encoded frame, ready to be sealed and sent.
 pub struct EncodedFrame {
+    pub generation: u32,
     pub display: u32,
     pub width: u16,
     pub height: u16,
-    pub jpeg: Vec<u8>,
+    pub codec: Codec,
+    pub keyframe: bool,
+    pub payload: Vec<u8>,
     pub capture: Duration,
     pub encode: Duration,
 }
@@ -46,6 +48,12 @@ pub struct ScreenCapturer {
     fps: u8,
     last_signature: Option<u64>,
     last_frame_at: Instant,
+    #[cfg(feature = "h264")]
+    h264: Option<vr_video::h264::SoftwareEncoder>,
+    #[cfg(feature = "h264")]
+    h264_requested: bool,
+    #[cfg(feature = "h264")]
+    force_idr: bool,
 }
 
 impl ScreenCapturer {
@@ -72,7 +80,41 @@ impl ScreenCapturer {
             fps,
             last_signature: None,
             last_frame_at: Instant::now(),
+            #[cfg(feature = "h264")]
+            h264: None,
+            #[cfg(feature = "h264")]
+            h264_requested: false,
+            #[cfg(feature = "h264")]
+            force_idr: true,
         })
+    }
+
+    #[cfg(feature = "h264")]
+    pub fn enable_h264(&mut self) {
+        self.h264_requested = true;
+        self.reset_encoder();
+    }
+
+    #[cfg(feature = "h264")]
+    fn reset_encoder(&mut self) {
+        match vr_video::h264::SoftwareEncoder::new(self.quality, self.fps) {
+            Ok(encoder) => self.h264 = Some(encoder),
+            Err(error) => {
+                tracing::warn!(%error, "H.264 unavailable; falling back to JPEG");
+                self.h264 = None;
+                self.h264_requested = false;
+            }
+        }
+        self.last_signature = None;
+        self.force_idr = true;
+    }
+
+    pub fn frame_dropped(&mut self) {
+        self.last_signature = None;
+        #[cfg(feature = "h264")]
+        {
+            self.force_idr = true;
+        }
     }
 
     fn monitor(&self) -> Result<&xcap::Monitor> {
@@ -136,24 +178,69 @@ impl FrameSource for ScreenCapturer {
             self.last_frame_at = Instant::now();
             return Ok(None);
         }
-        self.last_signature = Some(signature);
 
         // Fit inside the requested box without ever upscaling.
         let (mut w, mut h) = (raw.width(), raw.height());
-        let max_w = self.max_width.max(320) as u32;
-        let max_h = self.max_height.max(240) as u32;
+        let (max_w, max_h) = (
+            self.max_width.max(320) as u32,
+            self.max_height.max(240) as u32,
+        );
+        #[cfg(feature = "h264")]
+        let (max_w, max_h) = if self.h264.is_some() {
+            (
+                max_w.min(u32::from(vr_video::h264::MAX_WIDTH)),
+                max_h.min(u32::from(vr_video::h264::MAX_HEIGHT)),
+            )
+        } else {
+            (max_w, max_h)
+        };
         if w > max_w || h > max_h {
             let scale = (max_w as f32 / w as f32).min(max_h as f32 / h as f32);
             w = ((w as f32 * scale).round() as u32).max(2);
             h = ((h as f32 * scale).round() as u32).max(2);
         }
 
+        #[cfg(feature = "h264")]
+        if self.h264.is_some() {
+            w = (w & !1).max(2);
+            h = (h & !1).max(2);
+        }
         let encode_started = Instant::now();
         let resized = if (w, h) == (raw.width(), raw.height()) {
             raw
         } else {
             imageops::resize(&raw, w, h, imageops::FilterType::Triangle)
         };
+        #[cfg(feature = "h264")]
+        if let Some(encoder) = self.h264.as_mut() {
+            match encoder.encode(resized.as_raw(), w as u16, h as u16, self.force_idr) {
+                Ok((payload, keyframe)) if !payload.is_empty() => {
+                    self.force_idr = false;
+                    self.last_signature = Some(signature);
+                    self.last_frame_at = Instant::now();
+                    return Ok(Some(EncodedFrame {
+                        generation: 0,
+                        display: self.selected,
+                        width: w as u16,
+                        height: h as u16,
+                        codec: Codec::H264,
+                        keyframe,
+                        payload,
+                        capture,
+                        encode: encode_started.elapsed(),
+                    }));
+                }
+                Ok(_) => {
+                    self.last_frame_at = Instant::now();
+                    return Ok(None);
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "H.264 encode failed; falling back to JPEG");
+                    self.h264 = None;
+                    self.h264_requested = false;
+                }
+            }
+        }
         let rgb = DynamicImage::ImageRgba8(resized).to_rgb8();
         let mut jpeg = Vec::with_capacity(64 * 1024);
         let mut encoder =
@@ -163,24 +250,38 @@ impl FrameSource for ScreenCapturer {
             .context("jpeg encode failed")?;
         let encode = encode_started.elapsed();
 
+        self.last_signature = Some(signature);
         self.last_frame_at = Instant::now();
         Ok(Some(EncodedFrame {
+            generation: 0,
             display: self.selected,
             width: w as u16,
             height: h as u16,
-            jpeg,
+            codec: Codec::Jpeg,
+            keyframe: true,
+            payload: jpeg,
             capture,
             encode,
         }))
     }
 
     fn select_display(&mut self, id: u32) {
-        self.selected = id;
-        self.last_signature = None;
+        if self.selected != id {
+            self.selected = id;
+            self.frame_dropped();
+        }
     }
 
     fn set_quality(&mut self, quality: u8) {
-        self.quality = quality.clamp(20, 95);
+        let quality = quality.clamp(20, 95);
+        if self.quality != quality {
+            self.quality = quality;
+            #[cfg(feature = "h264")]
+            if self.h264_requested {
+                self.reset_encoder();
+            }
+            self.last_signature = None;
+        }
     }
 
     fn set_limits(&mut self, max_width: u16, max_height: u16, fps: u8) {

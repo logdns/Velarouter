@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test vendor.test.mjs",
+    "test": "node --test vendor.test.mjs client.test.mjs",
     "build:vendor": "esbuild noble-entry.js --bundle --format=esm --platform=browser --minify --legal-comments=eof --outfile=vendor/noble.js"
   },
   "dependencies": {

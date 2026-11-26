@@ -2,6 +2,17 @@
 
 **局域网直连不需要部署。** 跨网时可继续用客户端的公共会合服务，或改用自建信令。当前桌面端的自建信令模式用 9 位码建立 QUIC 直连，打洞失败不会自动使用中继。
 
+## 公开入口与服务区分
+
+| 地址 | 用途 |
+|---|---|
+| [项目主页](https://2sb.org/Velarouter/)（[GitHub Pages 入口](https://logdns.github.io/Velarouter/)） | 静态介绍、下载和文档，不提供信令或主控 |
+| [GitHub Releases](https://github.com/logdns/Velarouter/releases/latest) | 各平台安装包与 `SHA256SUMS.txt` |
+| 被控端提供的局域网 Web 地址 | 内置浏览器主控，仅在可信局域网使用 |
+| 你自己的信令 HTTPS 域名 | 跨网会合，不能用项目主页的 URL 代替 |
+
+Pages 由 `pages.yml` 从 `main` 下的 `site/` 部署；不包含服务端配置、私钥或 `.env`。桌面发布和站点部署不会升级线上信令；自建服务按下面步骤单独维护。
+
 ## 准备
 
 - 一台你管理的公网 Linux 服务器，安装 Docker Engine、Compose v2、curl、openssl。

@@ -108,7 +108,7 @@ async fn vr_ws(
             let secret = state.secret.clone();
             let cfg = crate::session_config(&state, &session_id, secret);
             let channel: Box<dyn MessageChannel> = Box::new(AxumChannel { socket, peer });
-            match Session::accept(channel, cfg).await {
+            match crate::accept_viewer(&state, channel, cfg).await {
                 Ok(session) => {
                     info!(%session_id, "viewer authenticated over lan");
                     if let Err(e) = run_session(session, state).await {
@@ -145,6 +145,10 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
     let _presence = Presence::joined(&state.events);
     let peer = session.peer().clone();
     let (mut sender, mut receiver, _peer) = session.into_parts();
+    let view_only = peer.app.starts_with(vr_proto::WALL_APP_PREFIX);
+    if view_only {
+        sender.send_control(Control::ViewOnly).await?;
+    }
 
     if !peer.capabilities.codecs.is_empty() && !peer.capabilities.codecs.contains(&Codec::Jpeg) {
         sender
@@ -205,6 +209,11 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
         video.max_height = video.max_height.min(peer.capabilities.max_height);
     }
 
+    if view_only {
+        video.max_width = video.max_width.min(vr_proto::WALL_WIDTH);
+        video.max_height = video.max_height.min(vr_proto::WALL_HEIGHT);
+        video.fps = video.fps.min(vr_proto::WALL_FPS);
+    }
     let control = Arc::new(StreamControl::new(video.quality, video.display));
     let (frame_tx, mut frame_rx) = mpsc::channel::<EncodedFrame>(2);
     let (file_tx, mut file_rx) = mpsc::channel::<FileOut>(4);
@@ -237,6 +246,8 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
     let mut last_rtt_ms = 0u32;
     let mut last_clipboard: Option<String> = None;
 
+    #[cfg(feature = "linux-audio")]
+    let mut audio = AudioStream::default();
     let mut shutdown = state.config.shutdown.clone();
     let result: Result<()> = loop {
         tokio::select! {
@@ -260,19 +271,42 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
                     sender.send_control(Control::Warning {code: if allowed {"input_ready"} else {"input"}.into(), message: if allowed {"系统已允许远程交互"} else {"被控端已结束远程交互授权"}.into() }).await?;
                 }
             }
+            packet = async {
+                #[cfg(feature = "linux-audio")]
+                return audio.next().await;
+                #[cfg(not(feature = "linux-audio"))]
+                std::future::pending::<()>().await
+            } => {
+                #[cfg(feature = "linux-audio")]
+                match packet {
+                    AudioEvent::Packet(pcm) => {
+                        if let Err(error) = sender.send_audio(&pcm).await { break Err(error.into()); }
+                    }
+                    AudioEvent::Status(status) => {
+                        if let Err(error) = sender.send_control(status).await { break Err(error.into()); }
+                    }
+                }
+                #[cfg(not(feature = "linux-audio"))]
+                let _ = packet;
+            }
             frame = frame_rx.recv() => {
                 match frame {
                     Some(frame) => {
+                        if frame.generation != control.generation.load(Ordering::Relaxed) {
+                            continue;
+                        }
                         last_capture_ms = frame.capture.as_secs_f32() * 1000.0;
                         last_encode_ms = frame.encode.as_secs_f32() * 1000.0;
+                        let mut header = vr_proto::VideoHeader::new(frame.codec, 0, frame.display, frame.width, frame.height);
+                        if frame.keyframe { header.flags |= vr_proto::frame_flags::KEYFRAME; }
                         if let Err(e) = sender
-                            .send_media(Codec::Jpeg, frame.display, frame.width, frame.height, &frame.jpeg)
+                            .send_video_frame(header, &frame.payload)
                             .await
                         {
                             break Err(e.into());
                         }
                         frames += 1;
-                        bytes += frame.jpeg.len() as u64;
+                        bytes += frame.payload.len() as u64;
                     }
                     None => break Ok(()),
                 }
@@ -281,6 +315,7 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
                 last_inbound = Instant::now();
                 match event {
                     Ok(Event::Control(Control::Input { event })) => {
+                        if view_only { continue; }
                         #[cfg(target_os = "linux")]
                         if let Some(p) = &state.portal {
                             let grant = p.borrow().clone();
@@ -329,6 +364,32 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
                             }
                         }
                     }
+                    Ok(Event::Control(Control::AudioRequest { enabled })) => {
+                        // Do not send new protocol messages to old viewers.
+                        if view_only || !peer.capabilities.audio { continue; }
+                        let status = if !state.config.share_system_audio || !state.caps.audio {
+                            Control::AudioStatus { active: false, message: "被控端未允许系统声音，或音频设备不可用。".into() }
+                        } else {
+                            #[cfg(feature = "linux-audio")]
+                            {
+                                if !enabled {
+                                    audio.stop();
+                                    Control::AudioStatus { active: false, message: String::new() }
+                                } else if audio.capture.is_some() {
+                                    Control::AudioStatus { active: true, message: String::new() }
+                                } else {
+                                    audio.start();
+                                    continue; // A slow audio device must never stall video or input.
+                                }
+                            }
+                            #[cfg(not(feature = "linux-audio"))]
+                            {
+                                let _ = enabled;
+                                Control::AudioStatus { active: false, message: "此版本不支持系统音频。".into() }
+                            }
+                        };
+                        if let Err(error) = sender.send_control(status).await { break Err(error.into()); }
+                    }
                     Ok(Event::Control(Control::VideoConfig(cfg))) => {
                         control.quality.store(cfg.quality.clamp(20, 95), Ordering::Relaxed);
                         #[cfg(target_os="linux")]
@@ -336,20 +397,33 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
                         #[cfg(not(target_os="linux"))]
                         let selected=cfg.display;
                         if state.displays.iter().any(|d| d.id == selected) {control.display.store(selected, Ordering::Relaxed); }
-                        let fps = cfg.fps.clamp(1, 60);
-                        let max_width = cfg.max_width.clamp(320, 3840);
-                        let max_height = cfg.max_height.clamp(240, 2160);
-                        if fps != video.fps
+                        video.quality = cfg.quality.clamp(20, 95);
+                        video.display = control.display();
+                        let (codec, max_fps, width_limit, height_limit) = if view_only {
+                            (Codec::Jpeg, vr_proto::WALL_FPS, vr_proto::WALL_WIDTH, vr_proto::WALL_HEIGHT)
+                        } else {
+                            let codec = vr_video::capture_codec(cfg.codec, &state.caps.codecs, &peer.capabilities.codecs);
+                            (codec, if codec == Codec::H264 { 30 } else { 60 }, 3840, 2160)
+                        };
+                        let fps = cfg.fps.clamp(1, max_fps);
+                        let max_width = cfg.max_width.clamp(320, width_limit);
+                        let max_height = cfg.max_height.clamp(240, height_limit);
+                        if codec != video.codec || fps != video.fps
                             || max_width != video.max_width
                             || max_height != video.max_height
                         {
                             // Geometry and frame rate are baked into the capture
                             // thread, so restart it instead of deferring to the
                             // next session: the viewer asked for 2K/4K now.
+                            video.codec = codec;
                             video.fps = fps;
                             video.max_width = max_width;
                             video.max_height = max_height;
                             control.generation.fetch_add(1, Ordering::Relaxed);
+                            if let Some(old_capture) = capture.take() {
+                                // Do not overlap platform capture pipelines across a reconfigure.
+                                let _ = tokio::task::spawn_blocking(move || old_capture.join()).await;
+                            }
                             capture = spawn_capture(control.clone(), &video, frame_tx.clone())?;
                             info!(
                                 fps = video.fps,
@@ -360,7 +434,7 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
                         }
                     }
                     Ok(Event::Control(Control::Clipboard(ClipboardMsg { direction, text }))) => {
-                        if direction == ClipboardDirection::ViewerToAgent {
+                        if !view_only && direction == ClipboardDirection::ViewerToAgent {
                             set_clipboard(text.clone()).await;
                             last_clipboard = Some(text);
                         }
@@ -375,18 +449,20 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
                     Ok(Event::Control(Control::Bye { .. })) | Ok(Event::Closed(_)) => break Ok(()),
                     Ok(Event::Control(Control::Stats(_))) => {}
                     Ok(Event::Control(control)) => {
+                        if view_only { continue; }
                         let replies = transfer.handle_control(control, &state.files).await;
                         for reply in replies {
                             let _ = sender.send_control(reply).await;
                         }
                     }
                     Ok(Event::File { header, payload }) => {
+                        if view_only { continue; }
                         let replies = transfer.handle_chunk(header, &payload).await;
                         for reply in replies {
                             let _ = sender.send_control(reply).await;
                         }
                     }
-                    Ok(Event::Media { .. }) => {
+                    Ok(Event::Media { .. } | Event::Audio(_)) => {
                         // Viewers never send media; ignoring is safer than
                         // closing a session over a stray frame.
                     }
@@ -453,7 +529,7 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
                 }
             }
             _ = clipboard_timer.tick() => {
-                if peer.capabilities.clipboard {
+                if !view_only && peer.capabilities.clipboard {
                     if let Some(text) = read_clipboard().await {
                         if !text.is_empty() && last_clipboard.as_deref() != Some(text.as_str()) {
                             last_clipboard = Some(text.clone());
@@ -468,6 +544,8 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
         }
     };
 
+    #[cfg(feature = "linux-audio")]
+    drop(audio);
     #[cfg(target_os = "linux")]
     if let Some(g) = state.portal.as_ref().and_then(|p| p.borrow().clone()) {
         g.release(&mut portal_held).await;
@@ -475,19 +553,79 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
     if let Some(injector) = injector.as_mut() {
         let _ = injector.release_all();
     }
-    // Stop the capture thread *before* joining it: it blocks on `frame_tx.send`
-    // once the queue is full, and a join on a blocked thread kept the agent from
-    // ever accepting another viewer (which looked like "reconnect does nothing").
+    // Stop capture before waiting for the worker to finish.
     control.set_paused(true);
     control.stop.store(1, Ordering::Relaxed);
     drop(frame_rx);
-    if let Some(handle) = capture.take() {
-        let _ = handle.join();
-    }
     if let Some(handle) = capture {
-        let _ = handle.join();
+        let _ = tokio::task::spawn_blocking(move || handle.join()).await;
     }
     result
+}
+
+#[cfg(feature = "linux-audio")]
+#[derive(Default)]
+struct AudioStream {
+    opening: Option<tokio::task::JoinHandle<Result<vr_audio::Capture>>>,
+    capture: Option<vr_audio::Capture>,
+}
+
+#[cfg(feature = "linux-audio")]
+enum AudioEvent {
+    Packet(Vec<u8>),
+    Status(Control),
+}
+
+#[cfg(feature = "linux-audio")]
+impl AudioStream {
+    fn start(&mut self) {
+        if self.opening.is_none() {
+            self.opening = Some(tokio::spawn(vr_audio::Capture::start()));
+        }
+    }
+
+    fn stop(&mut self) {
+        if let Some(task) = self.opening.take() {
+            task.abort();
+        }
+        self.capture = None;
+    }
+
+    async fn next(&mut self) -> AudioEvent {
+        if let Some(task) = &mut self.opening {
+            let result = task.await;
+            self.opening = None;
+            if let Ok(Ok(capture)) = result {
+                self.capture = Some(capture);
+                return AudioEvent::Status(Control::AudioStatus {
+                    active: true,
+                    message: String::new(),
+                });
+            }
+            return AudioEvent::Status(Control::AudioStatus {
+                active: false,
+                message: "系统输出采集不可用，画面仍可继续。".into(),
+            });
+        }
+        if let Some(capture) = &mut self.capture {
+            if let Some(packet) = capture.recv().await {
+                return AudioEvent::Packet(packet);
+            }
+            self.capture = None;
+            return AudioEvent::Status(Control::AudioStatus {
+                active: false,
+                message: "系统音频采集已停止。".into(),
+            });
+        }
+        std::future::pending().await
+    }
+}
+
+#[cfg(feature = "linux-audio")]
+impl Drop for AudioStream {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 fn spawn_capture(
@@ -509,6 +647,10 @@ fn spawn_capture(
             return Ok(None);
         }
     };
+    #[cfg(feature = "h264")]
+    if video.codec == Codec::H264 {
+        capturer.enable_h264();
+    }
     let handle = std::thread::Builder::new()
         .name("vr-capture".into())
         .spawn(move || {
@@ -525,9 +667,13 @@ fn spawn_capture(
                 let display = control.display();
                 capturer.select_display(display);
                 match capturer.next_frame() {
-                    Ok(Some(frame)) => {
-                        // Latest frame wins: never queue stale video.
-                        let _ = tx.try_send(frame);
+                    Ok(Some(mut frame)) => {
+                        frame.generation = generation;
+                        if tx.try_send(frame).is_err() {
+                            // A dropped delta invalidates future references.
+                            // Also retry static JPEG frames lost to backpressure.
+                            capturer.frame_dropped();
+                        }
                     }
                     Ok(None) => {}
                     Err(e) => {

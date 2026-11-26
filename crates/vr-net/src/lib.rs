@@ -13,6 +13,7 @@
 //! signal server is unreachable, which is what makes offline/air-gapped use
 //! possible.
 
+pub mod connection_code;
 pub mod direct;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};

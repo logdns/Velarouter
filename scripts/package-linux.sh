@@ -9,7 +9,7 @@ case ${VR_LINUX_ARCH:-$(uname -m)} in
     *) echo '仅支持 x86_64 或 ARM64' >&2; exit 2 ;;
 esac
 target="$arch-unknown-linux-gnu"
-cargo build --release --locked -p vr-desktop --target "$target"
+cargo build --release --locked -p vr-desktop -p vr-terminal -p velarouter --target "$target"
 bin="${CARGO_TARGET_DIR:-target}/$target/release/velarouter-desktop"
 version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import sys,json;print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="vr-desktop"))')
 name="Velarouter-$version-linux-$arch"
@@ -18,10 +18,14 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 mkdir "$stage/$name"
 install -m755 "$bin" "$stage/$name/Velarouter"
+for cli in velarouter velarouter-view; do
+    install -m755 "${bin%/*}/$cli" "$stage/$name/$cli"
+done
 install -m755 packaging/linux/install.sh "$stage/$name/install.sh"
 install -m644 packaging/linux/Velarouter.desktop "$stage/$name/Velarouter.desktop"
 install -m644 LICENSE "$stage/$name/LICENSE"
 install -m644 docs/clients/DESKTOP-APP.md "$stage/$name/README.txt"
+install -m644 docs/clients/TERMINAL.md "$stage/$name/TERMINAL.md"
 for size in 48 128 256; do
     install -m644 "assets/brand/png/appicon/velarouter-$size.png" "$stage/$name/Velarouter-$size.png"
 done
@@ -40,8 +44,12 @@ tar -czf "dist/$name.tar.gz" -C "$stage" "$name"
 deb="$stage/deb"
 deb_name="Velarouter-$version-linux-$deb_arch.deb"
 install -Dm755 "$stage/$name/Velarouter" "$deb/usr/bin/Velarouter"
+for cli in velarouter velarouter-view; do
+    install -Dm755 "$stage/$name/$cli" "$deb/usr/bin/$cli"
+done
 install -Dm644 LICENSE "$deb/usr/share/doc/velarouter/copyright"
 install -Dm644 docs/clients/DESKTOP-APP.md "$deb/usr/share/doc/velarouter/README.md"
+install -Dm644 docs/clients/TERMINAL.md "$deb/usr/share/doc/velarouter/TERMINAL.md"
 for size in 48 128 256; do
     install -Dm644 "$stage/$name/Velarouter-$size.png" "$deb/usr/share/icons/hicolor/${size}x${size}/apps/Velarouter.png"
 done

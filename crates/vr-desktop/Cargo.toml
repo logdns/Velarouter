@@ -11,8 +11,15 @@ rust-version.workspace = true
 name = "velarouter-desktop"
 path = "src/main.rs"
 
+[features]
+h264 = ["vr-agent/h264", "vr-video/h264"]
+linux-audio = ["vr-agent/linux-audio", "dep:vr-audio"]
+
 [dependencies]
+vr-video = { path = "../vr-video" }
+vr-audio = { path = "../vr-audio", optional = true }
 vr-client = { path = "../vr-client" }
+vr-crypto = { path = "../vr-crypto" }
 vr-agent = { path = "../vr-agent" }
 vr-net = { path = "../vr-net" }
 vr-proto = { path = "../vr-proto" }
@@ -32,6 +39,7 @@ igd-next = { version = "0.18", features = ["aio_tokio"] }
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
+tempfile = "3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.14", default-features = false, features = ["async-io", "settings"] }

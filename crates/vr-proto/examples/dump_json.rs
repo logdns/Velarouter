@@ -19,10 +19,12 @@ fn main() {
             nonce: "<base64 16 bytes>".into(),
         },
         Control::AuthFinish {
+            require_viewer_identity: false,
             agent_pub: "<base64 SEC1 uncompressed>".into(),
             proof: "<base64 HMAC-SHA256>".into(),
         },
         Control::AuthProof {
+            viewer_identity: None,
             proof: "<base64 HMAC-SHA256>".into(),
         },
         Control::AuthOk,

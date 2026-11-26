@@ -26,6 +26,11 @@ export HOME="$work/Portable home %"
 export XDG_DATA_HOME="$HOME/share"
 bash "$portable/install.sh"
 cmp "$system/bin/Velarouter" "$HOME/.local/bin/Velarouter"
+for cli in velarouter velarouter-view; do
+    cmp "$portable/$cli" "$system/bin/$cli"
+    cmp "$system/bin/$cli" "$HOME/.local/bin/$cli"
+    "$system/bin/$cli" --version | grep -Fx "$cli $version"
+done
 for size in 48 128 256; do
     icon="icons/hicolor/${size}x${size}/apps/Velarouter.png"
     cmp "$portable/Velarouter-$size.png" "$system/share/$icon"

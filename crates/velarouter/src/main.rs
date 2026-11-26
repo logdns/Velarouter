@@ -295,6 +295,8 @@ async fn run_agent(args: AgentArgs) -> Result<()> {
         signal_url: args.signal,
         online: None,
         fixed_code: args.code.clone(),
+        trusted_viewers: None,
+        share_system_audio: false,
         quality: args.quality,
         fps: args.fps,
         max_width: args.max_width,
@@ -404,8 +406,7 @@ async fn run_probe(args: ProbeArgs) -> Result<()> {
                 );
             }
             Ok(Ok(Event::Control(_))) => {}
-            Ok(Ok(Event::Pong { .. })) => {}
-            Ok(Ok(Event::File { .. })) => {}
+            Ok(Ok(Event::Pong { .. } | Event::File { .. } | Event::Audio(_))) => {}
             Ok(Ok(Event::Closed(reason))) => {
                 anyhow::bail!("session closed: {reason:?}");
             }
@@ -533,7 +534,7 @@ fn probe_capture() -> Result<(u32, u32, usize)> {
     let frame = cap
         .next_frame()?
         .context("first capture returned no frame")?;
-    Ok((frame.width as u32, frame.height as u32, frame.jpeg.len()))
+    Ok((frame.width as u32, frame.height as u32, frame.payload.len()))
 }
 
 fn probe_input() -> Result<()> {
@@ -618,7 +619,7 @@ async fn run_ls(args: LsArgs) -> Result<()> {
                 anyhow::bail!("list failed: {message}");
             }
             Ok(Ok(Event::Control(_))) | Ok(Ok(Event::Pong { .. })) => continue,
-            Ok(Ok(Event::File { .. })) | Ok(Ok(Event::Media { .. })) => continue,
+            Ok(Ok(Event::File { .. } | Event::Media { .. } | Event::Audio(_))) => continue,
             Ok(Ok(Event::Closed(reason))) => anyhow::bail!("closed: {reason:?}"),
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => anyhow::bail!("timeout waiting for directory listing"),
@@ -724,7 +725,7 @@ async fn run_get(args: GetArgs) -> Result<()> {
             }
             Ok(Ok(Event::Control(_)))
             | Ok(Ok(Event::Pong { .. }))
-            | Ok(Ok(Event::Media { .. })) => continue,
+            | Ok(Ok(Event::Media { .. } | Event::Audio(_))) => continue,
             Ok(Ok(Event::Closed(reason))) => anyhow::bail!("closed: {reason:?}"),
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => anyhow::bail!("timeout"),
@@ -825,7 +826,7 @@ async fn run_put(args: PutArgs) -> Result<()> {
             Ok(Ok(Event::Control(_))) | Ok(Ok(Event::Pong { .. })) | Ok(Ok(Event::File { .. })) => {
                 continue
             }
-            Ok(Ok(Event::Media { .. })) => continue,
+            Ok(Ok(Event::Media { .. } | Event::Audio(_))) => continue,
             Ok(Ok(Event::Closed(reason))) => anyhow::bail!("closed: {reason:?}"),
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => anyhow::bail!("timeout"),
@@ -1058,7 +1059,8 @@ async fn run_connect_signal(args: ConnectArgs) -> Result<()> {
             Ok(Ok(Event::Control(Control::DisplayList { displays }))) => {
                 println!("displays: {displays:?}");
             }
-            Ok(Ok(Event::Control(Control::Pong { .. }))) | Ok(Ok(Event::Pong { .. })) => {}
+            Ok(Ok(Event::Control(Control::Pong { .. }) | Event::Pong { .. } | Event::Audio(_))) => {
+            }
             Ok(Ok(Event::Control(_))) => {}
             Ok(Ok(Event::File { .. })) => {}
             Ok(Ok(Event::Closed(reason))) => anyhow::bail!("closed: {reason:?}"),

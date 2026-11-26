@@ -34,19 +34,21 @@ use std::time::Duration;
 
 use tokio_tungstenite::tungstenite::Message;
 use vr_crypto::{
-    derive_session_key, proof, verify_proof, EphemeralKey, Sealer, DIR_AGENT_TO_VIEWER,
-    DIR_VIEWER_TO_AGENT,
+    derive_session_key, proof, verify_proof, DevicePublicKey, DeviceSigningKey, EphemeralKey,
+    Sealer, DIR_AGENT_TO_VIEWER, DIR_VIEWER_TO_AGENT,
 };
 use vr_proto::{
-    Capabilities, Control, DeviceInfo, FileHeader, Role, VideoHeader, MAX_CONTROL_BYTES,
-    PROTOCOL_VERSION,
+    Capabilities, Control, DeviceInfo, FileHeader, Role, VideoHeader, ViewerIdentityProof,
+    MAX_CONTROL_BYTES, PROTOCOL_VERSION,
 };
 use vr_transport::{ChannelMsg, MessageChannel, MessageReceiver, MessageSender, TransportError};
 
 pub const ENVELOPE_CONTROL: u8 = 1;
 pub const ENVELOPE_MEDIA: u8 = 2;
 pub const ENVELOPE_FILE: u8 = 3;
+pub const ENVELOPE_AUDIO: u8 = 4;
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+pub const UNTRUSTED_VIEWER_REASON: &str = "trusted viewer required";
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
@@ -101,6 +103,8 @@ pub enum Event {
         header: FileHeader,
         payload: Vec<u8>,
     },
+    /// One fixed-size system audio packet.
+    Audio(Vec<u8>),
     /// A pong arrived. Callers compute RTT from the timestamp they sent.
     Pong {
         ts: u64,
@@ -140,12 +144,33 @@ impl SessionSender {
         height: u16,
         payload: &[u8],
     ) -> Result<(), SessionError> {
-        let frame_id = self.frame_seq.fetch_add(1, Ordering::Relaxed);
-        let header = VideoHeader::new(codec, frame_id, display, width, height);
+        self.send_video_frame(VideoHeader::new(codec, 0, display, width, height), payload)
+            .await
+    }
+
+    /// Sends a video frame with codec-specific flags. The session owns frame IDs.
+    pub async fn send_video_frame(
+        &mut self,
+        mut header: VideoHeader,
+        payload: &[u8],
+    ) -> Result<(), SessionError> {
+        header.frame_id = self.frame_seq.fetch_add(1, Ordering::Relaxed);
         let frame = header.frame(payload);
         let mut envelope = Vec::with_capacity(frame.len() + 1);
         envelope.push(ENVELOPE_MEDIA);
         envelope.extend_from_slice(&frame);
+        let sealed = self.tx.seal(&envelope)?;
+        self.channel.send_binary(&sealed).await?;
+        Ok(())
+    }
+
+    pub async fn send_audio(&mut self, pcm: &[u8]) -> Result<(), SessionError> {
+        if pcm.len() != vr_proto::audio::PACKET_BYTES {
+            return Err(SessionError::Unexpected("invalid audio packet length"));
+        }
+        let mut envelope = Vec::with_capacity(pcm.len() + 1);
+        envelope.push(ENVELOPE_AUDIO);
+        envelope.extend_from_slice(pcm);
         let sealed = self.tx.seal(&envelope)?;
         self.channel.send_binary(&sealed).await?;
         Ok(())
@@ -231,6 +256,10 @@ impl SessionReceiver {
                     payload: payload.to_vec(),
                 })
             }
+            ENVELOPE_AUDIO if body.len() == vr_proto::audio::PACKET_BYTES => {
+                Ok(Event::Audio(body.to_vec()))
+            }
+            ENVELOPE_AUDIO => Err(SessionError::Unexpected("invalid audio packet length")),
             _ => Err(SessionError::Unexpected("unknown envelope kind")),
         }
     }
@@ -313,8 +342,16 @@ impl Session {
     /// Viewer side: sends `Hello`, performs the ECDH handshake, then exchanges
     /// capabilities.
     pub async fn connect(
+        channel: Box<dyn MessageChannel>,
+        cfg: SessionConfig,
+    ) -> Result<Self, SessionError> {
+        Self::connect_with_identity(channel, cfg, None).await
+    }
+
+    pub async fn connect_with_identity(
         mut channel: Box<dyn MessageChannel>,
         cfg: SessionConfig,
+        identity: Option<&DeviceSigningKey>,
     ) -> Result<Self, SessionError> {
         let key_pair = EphemeralKey::generate();
         send_json(
@@ -340,8 +377,12 @@ impl Session {
         let finish = tokio::time::timeout(HANDSHAKE_TIMEOUT, recv_control(&mut *channel))
             .await
             .map_err(|_| SessionError::Timeout)??;
-        let (agent_pub, agent_proof) = match finish {
-            Control::AuthFinish { agent_pub, proof } => (agent_pub, proof),
+        let (agent_pub, agent_proof, require_viewer_identity) = match finish {
+            Control::AuthFinish {
+                agent_pub,
+                proof,
+                require_viewer_identity,
+            } => (agent_pub, proof, require_viewer_identity),
             Control::AuthFail { reason } => return Err(SessionError::Rejected(reason)),
             _ => return Err(SessionError::Unexpected("expected auth_finish")),
         };
@@ -361,6 +402,12 @@ impl Session {
             &mut *channel,
             &Control::AuthProof {
                 proof: proof(&key, "viewer", &cfg.session_id),
+                viewer_identity: identity
+                    .filter(|_| require_viewer_identity)
+                    .map(|identity| ViewerIdentityProof {
+                        public_key: identity.public_key(),
+                        signature: identity.sign_session(&key),
+                    }),
             },
         )
         .await?;
@@ -389,8 +436,18 @@ impl Session {
     /// Agent side: waits for `Hello`, derives the key, proves itself, then
     /// exchanges capabilities.
     pub async fn accept(
+        channel: Box<dyn MessageChannel>,
+        cfg: SessionConfig,
+    ) -> Result<Self, SessionError> {
+        Self::accept_with_trust(channel, cfg, None).await
+    }
+
+    /// None preserves password-only access. Some(empty) intentionally denies
+    /// every viewer. The gate runs before AuthOk and any encrypted capabilities.
+    pub async fn accept_with_trust(
         mut channel: Box<dyn MessageChannel>,
         cfg: SessionConfig,
+        trusted_viewers: Option<&[DevicePublicKey]>,
     ) -> Result<Self, SessionError> {
         let hello = tokio::time::timeout(HANDSHAKE_TIMEOUT, recv_control(&mut *channel))
             .await
@@ -454,6 +511,7 @@ impl Session {
             &Control::AuthFinish {
                 agent_pub: key_pair.public_b64(),
                 proof: proof(&key, "agent", &cfg.session_id),
+                require_viewer_identity: trusted_viewers.is_some(),
             },
         )
         .await?;
@@ -461,8 +519,11 @@ impl Session {
         let proof_msg = tokio::time::timeout(HANDSHAKE_TIMEOUT, recv_control(&mut *channel))
             .await
             .map_err(|_| SessionError::Timeout)??;
-        let viewer_proof = match proof_msg {
-            Control::AuthProof { proof } => proof,
+        let (viewer_proof, viewer_identity) = match proof_msg {
+            Control::AuthProof {
+                proof,
+                viewer_identity,
+            } => (proof, viewer_identity),
             Control::AuthFail { reason } => return Err(SessionError::Rejected(reason)),
             _ => return Err(SessionError::Unexpected("expected auth_proof")),
         };
@@ -475,6 +536,26 @@ impl Session {
             )
             .await;
             return Err(SessionError::Auth("viewer proof mismatch".into()));
+        }
+        if let Some(allowed) = trusted_viewers {
+            let verified = viewer_identity.is_some_and(|identity| {
+                DevicePublicKey::parse(&identity.public_key)
+                    .ok()
+                    .is_some_and(|public_key| {
+                        allowed.contains(&public_key)
+                            && public_key.verify_session(&key, &identity.signature)
+                    })
+            });
+            if !verified {
+                let _ = send_json(
+                    &mut *channel,
+                    &Control::AuthFail {
+                        reason: UNTRUSTED_VIEWER_REASON.into(),
+                    },
+                )
+                .await;
+                return Err(SessionError::Auth(UNTRUSTED_VIEWER_REASON.into()));
+            }
         }
         send_json(&mut *channel, &Control::AuthOk).await?;
 
@@ -535,7 +616,7 @@ async fn finish_session(
             Ok(Ok(Event::Control(_))) | Ok(Ok(Event::Pong { .. })) | Ok(Ok(Event::File { .. })) => {
                 continue
             }
-            Ok(Ok(Event::Media { .. })) => {
+            Ok(Ok(Event::Media { .. } | Event::Audio(_))) => {
                 return Err(SessionError::Unexpected("media before capabilities"))
             }
             Ok(Ok(Event::Closed(_))) | Ok(Err(_)) => return Err(SessionError::Closed),
@@ -980,6 +1061,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_trust_list_denies_every_viewer() {
+        let (viewer_ch, agent_ch) = memory_channel_pair();
+        let viewer_key = DeviceSigningKey::generate();
+        let (viewer, agent) = tokio::join!(
+            Session::connect_with_identity(
+                Box::new(viewer_ch),
+                cfg("same-id", "code", "viewer"),
+                Some(&viewer_key)
+            ),
+            Session::accept_with_trust(
+                Box::new(agent_ch),
+                cfg("same-id", "code", "agent"),
+                Some(&[])
+            ),
+        );
+        assert!(
+            matches!(viewer, Err(SessionError::Rejected(reason)) if reason == UNTRUSTED_VIEWER_REASON)
+        );
+        assert!(
+            matches!(agent, Err(SessionError::Auth(reason)) if reason == UNTRUSTED_VIEWER_REASON)
+        );
+    }
+
+    #[tokio::test]
     async fn ping_pong_measures_rtt_on_the_sender() {
         let (viewer_ch, agent_ch) = memory_channel_pair();
         let agent_task = tokio::spawn(async move {
@@ -1009,6 +1114,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn audio_is_authenticated_ordered_and_fixed_size() {
+        let (viewer_ch, agent_ch) = memory_channel_pair();
+        let (viewer, agent) = tokio::join!(
+            Session::connect(Box::new(viewer_ch), cfg("audio", "code", "viewer")),
+            Session::accept(Box::new(agent_ch), cfg("audio", "code", "agent")),
+        );
+        let (mut viewer, mut agent) = (viewer.unwrap(), agent.unwrap());
+        assert!(agent.sender.send_audio(&[0; 10]).await.is_err());
+        let packet = vec![17; vr_proto::audio::PACKET_BYTES];
+        agent.sender.send_audio(&packet).await.unwrap();
+        assert!(matches!(viewer.recv().await.unwrap(), Event::Audio(pcm) if pcm == packet));
+        agent
+            .send_media(vr_proto::Codec::Jpeg, 0, 640, 480, b"frame")
+            .await
+            .unwrap();
+        assert!(
+            matches!(viewer.recv().await.unwrap(), Event::Media { payload, .. } if payload == b"frame")
+        );
+    }
+
+    #[tokio::test]
     async fn media_frames_keep_order_and_metadata() {
         let (viewer_ch, agent_ch) = memory_channel_pair();
         let viewer_task = tokio::spawn(async move {
@@ -1032,6 +1158,21 @@ mod tests {
             }
             other => panic!("unexpected: {other:?}"),
         }
+        let mut h264 = VideoHeader::new(vr_proto::Codec::H264, 999, 2, 640, 480);
+        h264.flags = vr_proto::frame_flags::KEYFRAME;
+        agent
+            .sender
+            .send_video_frame(h264, b"test payload")
+            .await
+            .unwrap();
+        let Event::Media { header, payload } = viewer.recv().await.unwrap() else {
+            panic!("expected a second video frame");
+        };
+        assert_eq!(header.codec, vr_proto::Codec::H264);
+        assert_eq!(header.flags, vr_proto::frame_flags::KEYFRAME);
+        assert_eq!(header.display, 2);
+        assert_eq!(header.frame_id, 1);
+        assert_eq!(payload, b"test payload");
     }
 
     #[tokio::test]

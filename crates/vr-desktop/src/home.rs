@@ -333,7 +333,54 @@ impl App {
             if !self.error.is_empty() {
                 ui.label(RichText::new(&self.error).size(14.0).color(theme::DANGER));
             }
+            ui.horizontal_wrapped(|ui| {
+                if ui.link("桌面墙 · 只读预览").clicked() {
+                    self.page = Page::Wall;
+                    self.password_input.clear();
+                }
+            });
+            if !self.recent.entries().is_empty() {
+                ui.collapsing("最近连接", |ui| self.recent_connections(ui));
+            }
         });
+    }
+
+    fn recent_connections(&mut self, ui: &mut egui::Ui) {
+        let mut selected = None;
+        let mut removed = None;
+        for group in [recent::Group::Lan, recent::Group::Internet] {
+            let mut entries = self.recent.for_group(group).peekable();
+            if entries.peek().is_none() {
+                continue;
+            }
+            theme::section_label(ui, group.label());
+            for entry in entries {
+                ui.push_id(entry.code(), |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        let label = if entry.peer().is_empty() {
+                            entry.code()
+                        } else {
+                            entry.peer()
+                        };
+                        if ui.link(label).on_hover_text(entry.code()).clicked() {
+                            selected = Some(entry.code().to_owned());
+                        }
+                        if ui.small_button("移除").clicked() {
+                            removed = Some(entry.code().to_owned());
+                        }
+                    });
+                });
+            }
+        }
+        if let Some(code) = selected {
+            self.code_input = code;
+            self.password_input.clear();
+            self.error.clear();
+        }
+        if let Some(code) = removed {
+            self.recent.remove(&code);
+            self.dirty = true;
+        }
     }
 
     fn lan_card(&self, ui: &mut egui::Ui) {
@@ -543,6 +590,19 @@ impl App {
     }
 
     fn settings_permissions(&mut self, ui: &mut egui::Ui) {
+        ui.collapsing("可信设备", |ui| self.settings_trusted_devices(ui));
+        #[cfg(all(target_os = "linux", feature = "linux-audio"))]
+        {
+            if ui
+                .checkbox(&mut self.share_system_audio, "允许共享本机系统声音（试验）")
+                .changed()
+            {
+                self.dirty = true;
+                self.restart_requested |= self.hosting.enabled;
+            }
+            ui.weak("只共享默认扬声器的声音，不使用麦克风。更改将重启共享；主控端还需在会话内开启声音。");
+        }
+        ui.add_space(8.0);
         ui.label(RichText::new("键鼠与屏幕权限").size(19.0).strong());
         ui.add_space(6.0);
         #[cfg(target_os = "macos")]
@@ -624,6 +684,75 @@ impl App {
                     tracing::warn!(%e, "cannot open the firewall rule prompt");
                 }
             }
+        }
+    }
+
+    fn settings_trusted_devices(&mut self, ui: &mut egui::Ui) {
+        ui.label("启用后，连接本机需要正确密码和名单内的设备身份。");
+        if let Some(identity) = &self.viewer_identity {
+            if ui.button("复制本机配对信息").clicked() {
+                ui.ctx().copy_text(trust::pairing_code(identity));
+            }
+            ui.label("请通过可信渠道分享配对信息，并核对指纹：");
+            ui.monospace(trust::fingerprint(&identity.public_key()));
+        } else {
+            ui.weak("本机配对身份不可用。请检查设置目录权限后重启客户端。");
+        }
+
+        theme::field(
+            ui,
+            "添加可信设备",
+            &mut self.trust_draft,
+            "粘贴对方的 VR-PAIR1: 配对信息",
+        );
+        let mut changed = false;
+        if ui.button("添加到名单").clicked() {
+            match self.trust.add(&self.trust_draft) {
+                Ok(()) => {
+                    self.trust_draft.clear();
+                    self.trust_error.clear();
+                    changed = self.trust.required;
+                    self.dirty = true;
+                }
+                Err(error) => self.trust_error = error.into(),
+            }
+        }
+        if !self.trust_error.is_empty() {
+            ui.colored_label(theme::DANGER, &self.trust_error);
+        }
+        let mut removed = None;
+        for key in self.trust.devices() {
+            ui.push_id(key, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    let fingerprint = trust::fingerprint(key);
+                    if ui
+                        .link(format!("{}…", &fingerprint[..17]))
+                        .on_hover_text("点击复制完整指纹")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(fingerprint);
+                    }
+                    if ui.small_button("移除").clicked() {
+                        removed = Some(key.clone());
+                    }
+                });
+            });
+        }
+        if let Some(key) = removed {
+            self.trust.remove(&key);
+            changed |= self.trust.required;
+            self.dirty = true;
+        }
+        changed |= ui
+            .checkbox(&mut self.trust.required, "仅允许可信设备连接")
+            .changed();
+        if self.trust.required && self.trust.devices().is_empty() {
+            ui.colored_label(WARN, "名单为空：本机当前拒绝所有远程连接。");
+        }
+        ui.weak("修改生效时会重启本机共享、断开现有会话。旧桌面版、Web 和 CLI 不支持此限制。");
+        if changed {
+            self.dirty = true;
+            self.restart_requested |= self.hosting.enabled;
         }
     }
 
@@ -865,6 +994,8 @@ mod tests {
             "192.168.1.3:34789".parse().unwrap(),
             "10.0.0.5:34789".parse().unwrap(),
         ];
+        app.recent
+            .record("123456789012", "Previously connected desktop");
 
         for (width, height, tab) in [
             (1100.0, 790.0, HomeTab::Share),

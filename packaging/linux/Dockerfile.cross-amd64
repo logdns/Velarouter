@@ -15,7 +15,7 @@ COPY Cargo.lock Cargo.toml LICENSE ./
 COPY crates crates
 COPY assets assets
 COPY webviewer webviewer
-COPY docs/clients/DESKTOP-APP.md docs/clients/
+COPY docs/clients/DESKTOP-APP.md docs/clients/TERMINAL.md docs/clients/
 COPY packaging/linux/Velarouter.desktop packaging/linux/install.sh packaging/linux/
 COPY scripts/package-linux.sh scripts/
 RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target bash scripts/package-linux.sh

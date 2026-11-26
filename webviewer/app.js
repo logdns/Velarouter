@@ -136,15 +136,23 @@ class AsyncQueue {
   constructor() {
     this.items = [];
     this.waiters = [];
+    this.closed = false;
   }
   push(item) {
+    if (this.closed) return;
     const waiter = this.waiters.shift();
     if (waiter) waiter(item);
     else this.items.push(item);
   }
   next() {
+    if (this.closed) return Promise.resolve(null);
     if (this.items.length) return Promise.resolve(this.items.shift());
     return new Promise((resolve) => this.waiters.push(resolve));
+  }
+  close() {
+    this.closed = true;
+    this.items.length = 0;
+    for (const resolve of this.waiters.splice(0)) resolve(null);
   }
 }
 
@@ -162,6 +170,7 @@ class VrClient {
     this.rxCounter = 0n;
     this.closed = false;
     this.pendingDecode = false;
+    this.outgoing = Promise.resolve();
   }
 
   async connect() {
@@ -170,15 +179,18 @@ class VrClient {
     this.ws = new WebSocket(url);
     this.ws.binaryType = 'arraybuffer';
 
+    this.ws.onmessage = (ev) => this.queue.push(ev.data);
     await new Promise((resolve, reject) => {
       this.ws.onopen = resolve;
       this.ws.onerror = () => reject(new Error('无法连接被控端'));
+      this.ws.onclose = () => {
+        const wasClosed = this.closed;
+        this.closed = true;
+        this.queue.close();
+        reject(new Error('连接已关闭'));
+        if (!wasClosed) this.onClose?.();
+      };
     });
-    this.ws.onmessage = (ev) => this.queue.push(ev.data);
-    this.ws.onclose = () => {
-      this.closed = true;
-      this.onClose?.();
-    };
 
     this.sendJson({
       t: 'hello',
@@ -209,7 +221,11 @@ class VrClient {
 
     this.sendJson({ t: 'auth_proof', proof: await this.hmac(`viewer|${this.sessionId}`) });
     const ok = await this.nextJson();
+    if (ok.reason === 'trusted viewer required') {
+      throw new Error('对方仅允许可信设备。请使用已配对的桌面客户端。');
+    }
     if (ok.t !== 'auth_ok') throw new Error(ok.reason || '握手失败');
+    this.code = '';
 
     this.aes = await this.crypto.aesKey(this.key);
 
@@ -228,7 +244,8 @@ class VrClient {
       },
     });
 
-    this.loop();
+    if (this.closed) throw new Error('连接已关闭');
+    this.loop().catch(() => this.abort('会话数据无效，连接已关闭。'));
   }
 
   async hmac(message) {
@@ -242,6 +259,7 @@ class VrClient {
   async nextJson() {
     for (;;) {
       const data = await this.queue.next();
+      if (data === null) throw new Error('握手时连接已关闭');
       if (typeof data === 'string') return JSON.parse(data);
     }
   }
@@ -253,21 +271,28 @@ class VrClient {
     return iv;
   }
 
-  async sendControl(obj) {
+  sendControl(obj) {
+    if (!this.aes || this.closed) return Promise.resolve();
     const body = enc.encode(JSON.stringify(obj));
     const plain = new Uint8Array(body.length + 1);
     plain[0] = ENVELOPE_CONTROL;
     plain.set(body, 1);
-    await this.sendSealed(plain);
+    // WebCrypto encryption can finish out of order. Allocate/send counters
+    // serially so pointer down/move/up and release-all stay ordered on the wire.
+    this.outgoing = this.outgoing.then(() => this.sendSealed(plain)).catch(() => {
+      this.abort('无法发送会话数据，连接已关闭。');
+    });
+    return this.outgoing;
   }
 
   async sendSealed(plain) {
+    if (this.closed || this.ws.readyState !== WebSocket.OPEN) return;
     const counter = this.txCounter++;
     const ct = await this.crypto.encrypt(this.aes, this.iv(DIR_VIEWER_TO_AGENT, counter), plain);
     const frame = new Uint8Array(8 + ct.length);
     new DataView(frame.buffer).setBigUint64(0, counter);
     frame.set(ct, 8);
-    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(frame);
+    if (!this.closed && this.ws.readyState === WebSocket.OPEN) this.ws.send(frame);
   }
 
   async open(binary) {
@@ -284,13 +309,14 @@ class VrClient {
   async loop() {
     while (!this.closed) {
       const data = await this.queue.next();
+      if (data === null || this.closed) return;
       if (typeof data === 'string') continue; // relay control after handshake
       let plain;
       try {
         plain = await this.open(data);
       } catch (err) {
         console.error('解密失败', err);
-        this.close('decrypt-error');
+        this.abort('会话校验失败，连接已关闭。');
         return;
       }
       const kind = plain[0];
@@ -320,28 +346,59 @@ class VrClient {
     const width = view.getUint16(16);
     const height = view.getUint16(18);
     const length = view.getUint32(20);
-    if (24 + length > frame.length) return;
-    if (codec !== 1) return; // only JPEG is defined for the web viewer
+    if (24 + length !== frame.length || length > 8 * 1024 * 1024) return;
+    if (!width || !height || width > 4096 || height > 4096 || codec !== 1) return;
     const payload = frame.subarray(24, 24 + length);
 
     // Never queue decoded frames: a slow tab must drop, not lag further behind.
     if (this.pendingDecode) return;
     this.pendingDecode = true;
-    createImageBitmap(new Blob([payload], { type: 'image/jpeg' }))
+    decodeJpeg(new Blob([payload], { type: 'image/jpeg' }))
       .then((bitmap) => {
         this.pendingDecode = false;
-        this.onFrame?.({ bitmap, width, height, display, frameId });
+        if (this.closed || !this.onFrame || bitmap.width !== width || bitmap.height !== height) {
+          bitmap.close?.();
+          return;
+        }
+        this.onFrame({ bitmap, width, height, display, frameId });
       })
       .catch(() => {
         this.pendingDecode = false;
       });
   }
 
-  close(reason = 'bye') {
+  abort(message) {
     if (this.closed) return;
     this.closed = true;
-    this.sendControl({ t: 'bye', reason }).catch(() => {});
-    setTimeout(() => this.ws?.close(), 60);
+    this.code = '';
+    this.queue.close();
+    this.ws?.close();
+    if (message) this.onClose?.(message);
+  }
+
+  close(reason = 'bye') {
+    if (this.closed) return;
+    if (!this.aes) return this.abort();
+    this.sendControl({ t: 'bye', reason }).finally(() => this.abort());
+    setTimeout(() => this.abort(), 400);
+  }
+}
+
+// Older mobile browsers may lack createImageBitmap. Blob URLs are local and
+// are revoked as soon as the image finishes decoding.
+async function decodeJpeg(blob) {
+  if (globalThis.createImageBitmap) return createImageBitmap(blob);
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = url;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -350,6 +407,7 @@ class VrClient {
 // ---------------------------------------------------------------------------
 
 const canvas = $('screen');
+const viewport = $('viewport');
 const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
 const overlay = $('overlay');
 const gate = $('gate');
@@ -358,77 +416,165 @@ const gateError = $('gate-error');
 
 let client = null;
 let cryptoBackend = null;
-let sessionId = randomHex(8);
+let connecting = false;
 let quality = 70;
-let actualSize = false;
-let stats = { fps: 0, kbps: 0, rtt: 0, width: 0, height: 0 };
+let stats = { fps: 0, kbps: 0, rtt: 0 };
 let displays = [];
 let currentDisplay = 0;
-let pressedKeys = new Set();
-let lastFrameAt = 0;
+const pressedKeys = new Set();
+const heldButtons = new Set();
+let activePointer = null;
+let firstFrame = false;
+let frameDisplay = 0;
+let pendingDisplay = null;
+let actualMode = false;
+let statsLoop = 0;
 
 function setStatus(title, text, retry = false) {
+  canvas.inert = true;
+  setSessionControls(false);
   overlay.classList.remove('hidden');
   gate.classList.add('hidden');
   statusCard.classList.remove('hidden');
   $('status-title').textContent = title;
   $('status-text').textContent = text;
   $('btn-retry').classList.toggle('hidden', !retry);
+  if (retry) $('btn-retry').focus();
 }
 
-function showGate(error = '') {
+function showGate(error = '', focus = true) {
+  canvas.inert = true;
+  setSessionControls(false);
   overlay.classList.remove('hidden');
   statusCard.classList.add('hidden');
   gate.classList.remove('hidden');
   gateError.textContent = error;
-  $('code').focus();
+  if (focus) $('code').focus();
+}
+
+function setActualMode(enabled) {
+  releaseInputs();
+  actualMode = enabled;
+  $('btn-fit').setAttribute('aria-pressed', String(enabled));
+  $('btn-fit').textContent = enabled ? '返回操控' : '原始尺寸';
+  $('stat').textContent = enabled ? '原始尺寸浏览 · 不发送操作' : '';
+  canvas.classList.toggle('inspect', enabled);
+  sizeCanvas();
+  viewport.scrollTo(0, 0);
+}
+
+function setSessionControls(enabled) {
+  for (const id of ['display', 'btn-quality', 'btn-fit', 'btn-full', 'btn-disconnect']) {
+    $(id).disabled = !enabled;
+  }
 }
 
 async function start(code) {
+  if (connecting || client) return;
+  connecting = true;
+  firstFrame = false;
+  frameDisplay = 0;
+  pendingDisplay = null;
+  currentDisplay = 0;
+  displays = [];
+  stats = { fps: 0, kbps: 0, rtt: 0 };
+  renderDisplays();
+  $('device').textContent = '连接中…';
+  setActualMode(false);
+  $('resolution').textContent = '—';
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   setStatus('正在握手…', '正在与设备建立端到端加密通道');
-  if (!cryptoBackend) {
-    cryptoBackend = await createCrypto();
-    console.info(`[velarouter] crypto backend: ${cryptoBackend.name}`);
-  }
-  client = new VrClient({
-    code,
-    sessionId: (sessionId = randomHex(8)),
-    crypto: cryptoBackend,
-    onFrame: drawFrame,
-    onControl: handleControl,
-    onClose: () => {
-      if (overlay.classList.contains('hidden')) {
-        setStatus('连接已断开', '被控端关闭了会话，或网络中断。', true);
-      }
-    },
-  });
+  let attempt;
+  let timeout;
   try {
-    await client.connect();
+    cryptoBackend ??= await createCrypto();
+    attempt = new VrClient({
+      code,
+      sessionId: randomHex(8),
+      crypto: cryptoBackend,
+      onFrame: (frame) => {
+        if (client === attempt && !attempt.closed) drawFrame(frame);
+        else frame.bitmap.close?.();
+      },
+      onControl: (msg) => { if (client === attempt) handleControl(msg); },
+      onClose: (message) => {
+        if (client === attempt && !connecting) finishConnection(message);
+      },
+    });
+    client = attempt;
+    await Promise.race([
+      attempt.connect(),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('连接超时，请检查被控端和网络。')), 12000);
+      }),
+    ]);
+    if (attempt.closed) throw new Error('连接已关闭');
     overlay.classList.add('hidden');
-    canvas.focus();
-    sessionStorage.setItem('vr.code', code);
-    requestAnimationFrame(tickStats);
+    canvas.inert = false;
+    if (!displays.length) $('device').textContent = '已连接';
+    setSessionControls(true);
+    if (matchMedia('(pointer: fine)').matches) canvas.focus({ preventScroll: true });
+    statsLoop = requestAnimationFrame(tickStats);
   } catch (err) {
-    console.error(err);
+    attempt?.abort();
+    if (client === attempt) client = null;
+    $('device').textContent = '未连接';
     showGate(err.message || String(err));
+  } finally {
+    clearTimeout(timeout);
+    connecting = false;
   }
 }
 
-function drawFrame({ bitmap, width, height }) {
+function finishConnection(message, notify = true) {
+  const active = client;
+  releaseInputs();
+  client = null;
+  active?.close();
+  cancelAnimationFrame(statsLoop);
+  firstFrame = false;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  $('device').textContent = '未连接';
+  $('stat').textContent = '';
+  $('resolution').textContent = '—';
+  if (notify) setStatus('连接已断开', message || '被控端关闭了会话，或网络中断。请重新输入密码连接。', true);
+}
+
+function sizeCanvas() {
+  const { paddingLeft, paddingRight } = getComputedStyle(viewport);
+  const availableWidth = Math.max(0, viewport.clientWidth - parseFloat(paddingLeft) - parseFloat(paddingRight));
+  const scale = actualMode ? 1 : Math.min(availableWidth / canvas.width, viewport.clientHeight / canvas.height, 1);
+  canvas.style.width = `${canvas.width * scale}px`;
+  canvas.style.height = `${canvas.height * scale}px`;
+}
+new ResizeObserver(sizeCanvas).observe(viewport);
+
+function drawFrame({ bitmap, width, height, display }) {
+  if (pendingDisplay !== null) {
+    if (display !== pendingDisplay) {
+      bitmap.close?.();
+      return;
+    }
+    pendingDisplay = null;
+  }
+  if (frameDisplay !== display) releaseInputs();
+  firstFrame = true;
+  frameDisplay = display;
   if (canvas.width !== width || canvas.height !== height) {
     canvas.width = width;
     canvas.height = height;
-    $('resolution').textContent = `${width} × ${height}`;
+    sizeCanvas();
   }
+  $('resolution').textContent = `${width} × ${height}`;
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close?.();
-  lastFrameAt = performance.now();
 }
 
 function handleControl(msg) {
   switch (msg.t) {
     case 'display_list':
       displays = msg.displays ?? [];
+      if (pendingDisplay !== null && !displays.some((display) => display.id === pendingDisplay)) pendingDisplay = null;
       renderDisplays();
       break;
     case 'stats':
@@ -440,7 +586,10 @@ function handleControl(msg) {
       $('stat').textContent = msg.message;
       break;
     case 'error':
-      setStatus('被控端报错', msg.message, true);
+      finishConnection(msg.message || '被控端发生错误。');
+      break;
+    case 'bye':
+      finishConnection('被控端结束了会话。');
       break;
     case 'clipboard':
       if (msg.direction === 'agent_to_viewer') navigator.clipboard?.writeText(msg.text).catch(() => {});
@@ -472,6 +621,11 @@ function renderDisplays() {
 }
 
 function selectDisplay(id) {
+  if (id !== currentDisplay) {
+    releaseInputs();
+    pendingDisplay = id;
+    firstFrame = false;
+  }
   currentDisplay = id;
   const active = displays.find((d) => d.id === id);
   if (active) $('device').textContent = `${active.name} · ${active.width}×${active.height}`;
@@ -491,25 +645,23 @@ function tickStats() {
   $('fps').textContent = stats.fps.toFixed(0);
   $('kbps').textContent = stats.kbps.toFixed(0);
   $('rtt').textContent = stats.rtt ? stats.rtt.toFixed(0) : '—';
-  const idle = performance.now() - lastFrameAt;
-  $('stat').textContent = idle > 2500 && lastFrameAt ? '画面静止（省流）' : '实时';
-  requestAnimationFrame(tickStats);
+  statsLoop = requestAnimationFrame(tickStats);
 }
 
 // --- input -----------------------------------------------------------------
 
-const norm = (value, extent) => Math.max(0, Math.min(65535, Math.round((value / extent) * 65535)));
+const norm = (value, extent) => Math.max(0, Math.min(65535, Math.round((value / Math.max(extent, 1)) * 65535)));
 
 function pointFromEvent(ev) {
   const rect = canvas.getBoundingClientRect();
   return {
     x: norm(ev.clientX - rect.left, rect.width),
     y: norm(ev.clientY - rect.top, rect.height),
-    display: 0,
+    display: frameDisplay,
   };
 }
 
-const buttonName = (n) => ['left', 'middle', 'right', 'back', 'forward'][n] ?? 'left';
+const buttonName = (n) => ['left', 'middle', 'right', 'back', 'forward'][n];
 
 function modifiers(ev) {
   return (
@@ -522,155 +674,142 @@ function modifiers(ev) {
   );
 }
 
+function canSendInput() {
+  return client && !client.closed && firstFrame && !actualMode && overlay.classList.contains('hidden');
+}
+
 function sendInput(event) {
   client?.sendControl({ t: 'input', event });
 }
 
-canvas.addEventListener('mousemove', (ev) => {
-  if (!client) return;
-  sendInput({ k: 'mouse_move', ...pointFromEvent(ev) });
-});
+let pointerMove = null;
+let pointerFrame = 0;
+function flushMove() {
+  cancelAnimationFrame(pointerFrame);
+  pointerFrame = 0;
+  if (pointerMove && canSendInput()) sendInput({ k: 'mouse_move', ...pointerMove });
+  pointerMove = null;
+}
 
-canvas.addEventListener('mousedown', (ev) => {
+function releaseInputs() {
+  cancelAnimationFrame(pointerFrame);
+  pointerFrame = 0;
+  pointerMove = null;
+  const pointer = activePointer;
+  activePointer = null;
+  if (heldButtons.size || pressedKeys.size) sendInput({ k: 'release_all' });
+  heldButtons.clear();
+  pressedKeys.clear();
+  if (pointer !== null && canvas.hasPointerCapture(pointer)) canvas.releasePointerCapture(pointer);
+}
+
+canvas.addEventListener('pointerdown', (ev) => {
+  if (!canSendInput() || (ev.pointerType !== 'mouse' && !ev.isPrimary)) return;
+  const button = buttonName(ev.button);
+  if (!button || activePointer !== null) return;
   ev.preventDefault();
-  canvas.focus();
-  sendInput({ k: 'mouse_button', button: buttonName(ev.button), down: true, ...pointFromEvent(ev) });
+  canvas.focus({ preventScroll: true });
+  flushMove();
+  activePointer = ev.pointerId;
+  canvas.setPointerCapture(ev.pointerId);
+  heldButtons.add(button);
+  sendInput({ k: 'mouse_button', button, down: true, ...pointFromEvent(ev) });
 });
 
-window.addEventListener('mouseup', (ev) => {
-  if (!client) return;
-  sendInput({ k: 'mouse_button', button: buttonName(ev.button), down: false, ...pointFromEvent(ev) });
+canvas.addEventListener('pointermove', (ev) => {
+  if (!canSendInput() || (activePointer !== null && activePointer !== ev.pointerId)) return;
+  if (ev.pointerType !== 'mouse' && activePointer !== ev.pointerId) return;
+  pointerMove = pointFromEvent(ev);
+  if (!pointerFrame) pointerFrame = requestAnimationFrame(flushMove);
 });
 
-canvas.addEventListener('contextmenu', (ev) => ev.preventDefault());
+canvas.addEventListener('pointerup', (ev) => {
+  if (activePointer !== ev.pointerId) return;
+  flushMove();
+  // Pointer Events only emits pointerup for the last button on a mouse.
+  for (const button of heldButtons) {
+    sendInput({ k: 'mouse_button', button, down: false, ...pointFromEvent(ev) });
+  }
+  heldButtons.clear();
+  activePointer = null;
+});
 
-canvas.addEventListener(
-  'wheel',
-  (ev) => {
-    if (!client) return;
-    ev.preventDefault();
-    const detents = Math.max(-8, Math.min(8, Math.round(-ev.deltaY / 100) || Math.sign(ev.deltaY)));
-    const horizontal = Math.max(-8, Math.min(8, Math.round((ev.shiftKey ? -ev.deltaX : 0) / 100)));
-    sendInput({ k: 'wheel', dx: horizontal, dy: detents, ...pointFromEvent(ev) });
-  },
-  { passive: false },
-);
+for (const type of ['pointercancel', 'lostpointercapture']) {
+  canvas.addEventListener(type, (ev) => { if (activePointer === ev.pointerId) releaseInputs(); });
+}
+canvas.addEventListener('contextmenu', (ev) => { if (canSendInput()) ev.preventDefault(); });
 
-window.addEventListener('keydown', (ev) => {
-  if (!client || !overlay.classList.contains('hidden')) return;
-  if (ev.key === 'F5' || (ev.metaKey && ev.key === 'r')) return;
+canvas.addEventListener('wheel', (ev) => {
+  if (!canSendInput() || ev.ctrlKey || ev.metaKey) return;
+  ev.preventDefault();
+  const steps = (value) => Math.max(-8, Math.min(8, Math.round(value / 100) || Math.sign(value)));
+  sendInput({ k: 'wheel', dx: steps(-ev.deltaX), dy: steps(-ev.deltaY), ...pointFromEvent(ev) });
+}, { passive: false });
+
+canvas.addEventListener('keydown', (ev) => {
+  if (!canSendInput() || !ev.code || ev.key === 'Tab' || ev.key === 'F5' || ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'r')) return;
   ev.preventDefault();
   if (pressedKeys.has(ev.code)) return;
   pressedKeys.add(ev.code);
   sendInput({ k: 'key', code: ev.code, down: true, modifiers: modifiers(ev) });
 });
 
-window.addEventListener('keyup', (ev) => {
-  if (!client || !overlay.classList.contains('hidden')) return;
+canvas.addEventListener('keyup', (ev) => {
+  if (!canSendInput() || !pressedKeys.delete(ev.code)) return;
   ev.preventDefault();
-  pressedKeys.delete(ev.code);
   sendInput({ k: 'key', code: ev.code, down: false, modifiers: modifiers(ev) });
 });
 
-window.addEventListener('blur', () => {
-  if (client && pressedKeys.size) {
-    pressedKeys.clear();
-    sendInput({ k: 'release_all' });
-  }
-});
+canvas.addEventListener('blur', releaseInputs);
+window.addEventListener('blur', releaseInputs);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseInputs(); });
 
 canvas.addEventListener('paste', (ev) => {
   const text = ev.clipboardData?.getData('text');
-  if (text && client) {
+  if (text && canSendInput()) {
     ev.preventDefault();
     client.sendControl({ t: 'clipboard', direction: 'viewer_to_agent', text });
     sendInput({ k: 'text', text });
   }
 });
 
-// Touch: single finger moves the pointer, tap clicks, two fingers scroll.
-canvas.addEventListener(
-  'touchstart',
-  (ev) => {
-    ev.preventDefault();
-    if (ev.touches.length === 1) {
-      const t = ev.touches[0];
-      const rect = canvas.getBoundingClientRect();
-      sendInput({
-        k: 'touch',
-        phase: 'start',
-        points: [{ id: 0, x: norm(t.clientX - rect.left, rect.width), y: norm(t.clientY - rect.top, rect.height) }],
-        display: 0,
-      });
-    }
-  },
-  { passive: false },
-);
-
-canvas.addEventListener(
-  'touchmove',
-  (ev) => {
-    ev.preventDefault();
-    if (ev.touches.length !== 1) return;
-    const t = ev.touches[0];
-    const rect = canvas.getBoundingClientRect();
-    sendInput({
-      k: 'touch',
-      phase: 'move',
-      points: [{ id: 0, x: norm(t.clientX - rect.left, rect.width), y: norm(t.clientY - rect.top, rect.height) }],
-      display: 0,
-    });
-  },
-  { passive: false },
-);
-
-canvas.addEventListener('touchend', (ev) => {
-  ev.preventDefault();
-  const rect = canvas.getBoundingClientRect();
-  const t = ev.changedTouches[0];
-  sendInput({
-    k: 'touch',
-    phase: 'end',
-    points: [{ id: 0, x: norm(t.clientX - rect.left, rect.width), y: norm(t.clientY - rect.top, rect.height) }],
-    display: 0,
-  });
-});
-
 // --- buttons ---------------------------------------------------------------
 
 $('gate-form').addEventListener('submit', (ev) => {
   ev.preventDefault();
-  const code = $('code').value.trim();
+  const input = $('code');
+  const code = input.value.trim();
   if (!code) {
-    gateError.textContent = '请输入配对码';
+    gateError.textContent = '请输入连接密码';
     return;
   }
+  input.value = '';
   gateError.textContent = '';
   start(code);
 });
 
-$('btn-retry').addEventListener('click', () => {
-  const code = sessionStorage.getItem('vr.code') || '';
-  if (code) start(code);
-  else showGate();
-});
-
+$('btn-retry').addEventListener('click', () => showGate());
 $('btn-disconnect').addEventListener('click', () => {
-  client?.close('viewer-closed');
-  client = null;
+  finishConnection('', false);
   showGate();
 });
 
-$('btn-fit').addEventListener('click', () => {
-  actualSize = !actualSize;
-  canvas.classList.toggle('actual', actualSize);
-  $('btn-fit').textContent = actualSize ? '居中' : '适应';
-});
+$('btn-fit').addEventListener('click', () => setActualMode(!actualMode));
 
-$('btn-full').addEventListener('click', () => {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else document.documentElement.requestFullscreen().catch(() => {});
-});
+if (document.fullscreenEnabled && document.documentElement.requestFullscreen) {
+  $('btn-full').hidden = false;
+  $('btn-full').addEventListener('click', async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch {
+      $('stat').textContent = '当前浏览器无法进入全屏。';
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    $('btn-full').textContent = document.fullscreenElement ? '退出全屏' : '全屏';
+  });
+}
 
 $('display').addEventListener('change', (ev) => {
   const id = Number(ev.target.value);
@@ -680,26 +819,17 @@ $('display').addEventListener('change', (ev) => {
 $('btn-quality').addEventListener('click', () => {
   const levels = [40, 55, 70, 85, 95];
   quality = levels[(levels.indexOf(quality) + 1) % levels.length];
-  $('btn-quality').textContent = `画质 ${quality}`;
-  client?.sendControl({
-    t: 'video_config',
-    codec: 'jpeg',
-    quality,
-    fps: 30,
-    max_width: 1920,
-    max_height: 1080,
-    display: 0,
-  });
+  $('btn-quality').textContent = '画质 ' + quality;
+  selectDisplay(currentDisplay);
 });
 
-// Pre-fill the code when refreshing a session on the same tab.
-const saved = sessionStorage.getItem('vr.code');
-if (saved) $('code').value = saved;
+// Retire the previous releases' storage and URL-based password flow.
+try { sessionStorage.removeItem('vr.code'); } catch { /* Storage may be disabled. */ }
+const url = new URL(location.href);
+if (url.searchParams.has('code')) {
+  url.searchParams.delete('code');
+  history.replaceState(null, '', url);
+}
+showGate('', false);
 
-// Auto-connect when the URL contains ?code=… (useful for LAN kiosks).
-const urlCode = new URLSearchParams(location.search).get('code');
-if (urlCode) start(urlCode);
-else showGate();
-
-// Keep the session alive; the agent answers with a pong that feeds the RTT readout.
 setInterval(() => client?.sendControl({ t: 'ping', ts: Date.now() }), 3000);

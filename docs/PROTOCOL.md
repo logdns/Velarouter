@@ -180,6 +180,12 @@ viewer 的 label = "viewer"
 
 比较必须使用常量时间比较。
 
+### 3.3.1 可选的可信设备验证（开发版）
+
+受限被控端在明文 `auth_finish` 中置 `require_viewer_identity: true`。主控在验证被控端的常规密码证明后，可在 `auth_proof` 中附 `viewer_identity: {public_key, signature}`。两字段均为标准 Base64：公钥为压缩 SEC1 P-256（33 字节），签名为 ECDSA P-256/SHA-256 的固定宽度 `r || s`（64 字节）。签名覆盖域标签 `velarouter/vrp1/trusted-viewer/v1`、一个 NUL、32 字节会话密钥和公钥的规范 Base64 ASCII，按此顺序拼接。会话密钥不发送。被控端先验证原密码证明，再检查公钥是否在本地名单并验签；任何一项失败都不会发送 `auth_ok` 或进入能力交换。
+
+未启用限制时省略要求字段，主控不发送身份签名，密码握手和既有已知答案向量不变。旧主控只兼容未启用限制的被控端。配对字符串 `VR-PAIR1:<公钥>` 只用于编辑本地名单，不是新的联机码。此扩展只验证主控端身份。
+
 ### 3.4 已知答案测试向量
 
 固定输入：
@@ -349,7 +355,16 @@ offset size field
 
 - `video_config` 由 Viewer 发送；Agent 可裁剪到自身与 `caps` 的较小值；
 - `quality` 20..95，越界由 Agent clamp；
-- `fps` 与分辨率变更当前在会话内只部分生效（Agent 会发 `warning`），重连后完全生效。
+- 调整 `fps` 或画面尺寸上限会重建采集编码器；不修改操作系统显示模式。
+- H.264 试验版要求两端的 `caps.codecs` 都含 `h264`，并由主控发送 `video_config.codec=h264` 后才启用。VRF1 帧负载为一个 Annex-B access unit，IDR 帧附 SPS/PPS 并设置 `KEYFRAME`。发送端丢失待发送帧后请求新的 IDR；接收端重置后等待 IDR。任一端不支持、还未协商或编码器出错时，仍可收到 JPEG；接收端应按每帧的 codec 字段解码。
+
+#### 桌面墙只读会话
+
+桌面墙使用现有 VRP/1 握手和认证，Viewer 的 `app` 以 `velarouter-wall/` 开头。支持该模式的 Agent 在认证后首先发加密控制消息 `{"t":"view_only"}`，然后才发显示器列表和画面；Viewer 没有收到此确认就退出，不降级。该会话仅传 JPEG，限制为 480×270 / 3 fps；Agent 不处理输入、剪贴板、文件或音频请求。该模式不是新的授权凭证，不改变密码和可信设备规则，也不将其他已获授权的普通会话限制为只读。
+
+#### 可选系统音频
+
+仅在双方 `caps.audio = true`、被控端允许且主控显式发送 `{"t":"audio_request","enabled":true}` 时启用。被控端先回 `audio_status`（`active` 与 `message`），成功后可发送加密信封 `kind=4`：其余 3840 字节为 20 ms 的 48 kHz、双声道交错、signed 16-bit little-endian PCM。每个单元独立；拥堵时可丢弃未发出的音频单元，不重传。`enabled:false` 停止，无需重新握手。关闭／采集失败后发送 `active:false`。旧版和不支持音频的客户端不发送请求，也不接收音频单元。
 
 ### 6.4 输入
 

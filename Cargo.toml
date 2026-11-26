@@ -5,18 +5,21 @@ members = [
     "crates/vr-crypto",
     "crates/vr-transport",
     "crates/vr-net",
+    "crates/vr-video",
+    "crates/vr-audio",
     "crates/vr-session",
     "crates/vr-p2p",
     "crates/vr-meet",
     "crates/vr-client",
     "crates/vr-desktop",
+    "crates/vr-terminal",
     "crates/vr-signal",
     "crates/vr-agent",
     "crates/velarouter",
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.95"
 license = "Apache-2.0"

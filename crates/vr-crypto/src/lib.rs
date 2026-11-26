@@ -40,6 +40,10 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use p256::ecdh::diffie_hellman;
+use p256::ecdsa::{
+    signature::{Signer, Verifier},
+    Signature, SigningKey, VerifyingKey,
+};
 use p256::elliptic_curve::{sec1::ToSec1Point, Generate};
 use p256::{PublicKey, SecretKey};
 use rand::{CryptoRng, Rng};
@@ -127,6 +131,89 @@ impl EphemeralKey {
         let shared = diffie_hellman(self.secret.to_nonzero_scalar(), peer.as_affine());
         Ok(*shared.raw_secret_bytes().as_ref())
     }
+}
+
+/// Long-lived viewer identity. Separate from the ephemeral ECDH key and the
+/// device ID used for rendezvous. Never included in serialized handshake data.
+#[derive(Clone)]
+pub struct DeviceSigningKey(SigningKey);
+
+impl DeviceSigningKey {
+    pub fn generate() -> Self {
+        Self(SigningKey::generate_from_rng(
+            &mut rand::rand_core::UnwrapErr(rand::rngs::SysRng),
+        ))
+    }
+
+    pub fn public_key(&self) -> String {
+        b64(self.0.verifying_key().to_sec1_point(true).as_bytes())
+    }
+
+    pub fn from_secret_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        SigningKey::from_slice(bytes)
+            .map(Self)
+            .map_err(|_| CryptoError::PrivateKey)
+    }
+
+    pub fn secret_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes().into()
+    }
+
+    pub fn sign_session(&self, session_key: &[u8; KEY_LEN]) -> String {
+        let signature: Signature = self
+            .0
+            .sign(&viewer_identity_message(session_key, &self.public_key()));
+        b64(&signature.to_bytes())
+    }
+}
+
+/// A validated device key. Accepted encoding: canonical base64 of compressed
+/// P-256 SEC1. A device name or rendezvous code is not an identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DevicePublicKey(VerifyingKey);
+
+impl DevicePublicKey {
+    pub fn parse(encoded: &str) -> Result<Self, CryptoError> {
+        if encoded.len() != 44 {
+            return Err(CryptoError::PublicKey);
+        }
+        let bytes = unb64(encoded)?;
+        let key = VerifyingKey::from_sec1_bytes(&bytes).map_err(|_| CryptoError::PublicKey)?;
+        if b64(key.to_sec1_point(true).as_bytes()) != encoded {
+            return Err(CryptoError::PublicKey);
+        }
+        Ok(Self(key))
+    }
+
+    pub fn verify_session(&self, session_key: &[u8; KEY_LEN], encoded: &str) -> bool {
+        if encoded.len() != 88 {
+            return false;
+        }
+        unb64(encoded)
+            .ok()
+            .and_then(|bytes| Signature::from_slice(&bytes).ok())
+            .is_some_and(|signature| {
+                let public_key = b64(self.0.to_sec1_point(true).as_bytes());
+                self.0
+                    .verify(
+                        &viewer_identity_message(session_key, &public_key),
+                        &signature,
+                    )
+                    .is_ok()
+            })
+    }
+}
+
+fn viewer_identity_message(session_key: &[u8; KEY_LEN], public_key: &str) -> Vec<u8> {
+    // Use the secret channel binding rather than signing attacker-supplied
+    // plaintext. Both ephemeral keys, the session ID and the password affect
+    // this binding. Use a separate domain from the password proofs.
+    [
+        b"velarouter/vrp1/trusted-viewer/v1\0".as_slice(),
+        session_key,
+        public_key.as_bytes(),
+    ]
+    .concat()
 }
 
 /// Derives the 32-byte session key from the ECDH secret, the session id and the
@@ -345,6 +432,20 @@ mod tests {
         let vk = derive_session_key(&v_shared, &sid, &code).unwrap();
         let ak = derive_session_key(&a_shared, &sid, &code).unwrap();
         assert_eq!(vk, ak);
+    }
+
+    #[test]
+    fn viewer_signature_is_bound_to_the_key_and_session() {
+        let identity = DeviceSigningKey::generate();
+        let other = DeviceSigningKey::generate();
+        let public_key = DevicePublicKey::parse(&identity.public_key()).unwrap();
+        let other_key = DevicePublicKey::parse(&other.public_key()).unwrap();
+        let session = [11; KEY_LEN];
+        let signature = identity.sign_session(&session);
+        assert!(public_key.verify_session(&session, &signature));
+        assert!(!public_key.verify_session(&[12; KEY_LEN], &signature));
+        assert!(!other_key.verify_session(&session, &signature));
+        assert!(!public_key.verify_session(&session, "not a signature"));
     }
 
     #[test]

@@ -12,7 +12,6 @@ use tokio::net::UdpSocket;
 use tokio::sync::watch;
 use tracing::{info, warn};
 use vr_meet::{Announce, Role};
-use vr_session::Session;
 
 use crate::{AgentEvent, AgentState};
 
@@ -157,7 +156,7 @@ async fn once(
         .context("对方没有完成直连（双方都可能位于对称 NAT 之后）")??;
 
     let configuration = crate::session_config(state, &peer.session, state.secret.clone());
-    let session = Session::accept(Box::new(channel) as _, configuration)
+    let session = crate::accept_viewer(state, Box::new(channel), configuration)
         .await
         .context("密码校验失败或对方取消了连接")?;
     info!("internet session established");

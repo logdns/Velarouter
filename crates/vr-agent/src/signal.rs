@@ -16,8 +16,7 @@ use serde_json::json;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info, warn};
-use vr_session::{Session, WsChannel};
-use vr_transport::MessageChannel;
+use vr_session::WsChannel;
 
 use crate::Identity;
 use crate::{session_config, AgentState, AGENT_VERSION, PAIRING_REFRESH};
@@ -295,7 +294,7 @@ async fn handle_invite(
     let url = client.relay_url(&invite.session_id, &token);
     let channel = WsChannel::connect_relay(&url, false).await?;
     let cfg = session_config(&state, &invite.session_id, state.secret.clone());
-    let session: Session = Session::accept(Box::new(channel) as Box<dyn MessageChannel>, cfg)
+    let session = crate::accept_viewer(&state, Box::new(channel), cfg)
         .await
         .context("relay handshake failed")?;
     info!(session = %invite.session_id, "relay session established");
@@ -322,7 +321,7 @@ pub(super) async fn accept_at(
     // The rendezvous token doubles as the session id so both sides derive the
     // same HKDF salt.
     let cfg = session_config(&state, &token, state.secret.clone());
-    let session = Session::accept(Box::new(channel) as Box<dyn MessageChannel>, cfg)
+    let session = crate::accept_viewer(&state, Box::new(channel), cfg)
         .await
         .context("p2p VRP handshake failed (wrong password?)")?;
     info!(peer = %p2p.peer, "p2p session established (no relay)");

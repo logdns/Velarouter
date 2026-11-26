@@ -13,9 +13,17 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod audio;
+
 /// Wire protocol version. Bumped on any breaking change to [`Control`] or the
 /// binary framing. Peers must reject unknown major versions instead of guessing.
 pub const PROTOCOL_VERSION: u16 = 1;
+
+/// Viewer app family reserved for the opt-in desktop wall preview.
+pub const WALL_APP_PREFIX: &str = "velarouter-wall/";
+pub const WALL_WIDTH: u16 = 480;
+pub const WALL_HEIGHT: u16 = 270;
+pub const WALL_FPS: u8 = 3;
 
 /// Default TCP/UDP port of an agent ("被控端") on the local network.
 pub const DEFAULT_AGENT_PORT: u16 = 34789;
@@ -446,6 +454,12 @@ impl FileHeader {
 
 /// Every control-plane message of VRP/1.
 ///
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewerIdentityProof {
+    pub public_key: String,
+    pub signature: String,
+}
+
 /// The JSON shape is the contract that all SDKs implement:
 /// `{"t":"input","event":{"k":"mouse_move","x":32768,"y":16384}}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -473,10 +487,14 @@ pub enum Control {
     AuthFinish {
         agent_pub: String,
         proof: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        require_viewer_identity: bool,
     },
     /// Viewer → agent. `HMAC-SHA256(session_key, "viewer" || session_id)`.
     AuthProof {
         proof: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        viewer_identity: Option<ViewerIdentityProof>,
     },
     /// Agent → viewer. Handshake accepted; later frames are encrypted.
     AuthOk,
@@ -557,6 +575,17 @@ pub enum Control {
     },
     /// Viewer → agent, optionally agent → viewer to advertise its own settings.
     VideoConfig(VideoConfig),
+    /// Agent → viewer. Confirms the host enforces a view-only session.
+    ViewOnly,
+    /// Viewer → agent. A per-session opt-in; the host may still refuse.
+    AudioRequest {
+        enabled: bool,
+    },
+    /// Agent → viewer. Outcome of a request or asynchronous device failure.
+    AudioStatus {
+        active: bool,
+        message: String,
+    },
     /// Agent → viewer. Lists capturable displays.
     DisplayList {
         displays: Vec<DisplayInfo>,

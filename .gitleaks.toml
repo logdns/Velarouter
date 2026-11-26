@@ -6,7 +6,7 @@ useDefault = true
 [[allowlists]]
 description = "Public VRP/1 known-answer vector, derived from documented fixed inputs"
 condition = "AND"
-paths = ['^(docs/PROTOCOL\.md|sdk/go/vector_test\.go)$']
+paths = ['(^|[/\\])(docs[/\\]PROTOCOL\.md|sdk[/\\]go[/\\]vector_test\.go)$']
 regexTarget = "secret"
 regexes = [
   '^251d80ca3d587258fef045dad50e815efce55f634cad47f89a3a913be2b56238$',

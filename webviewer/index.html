@@ -10,34 +10,36 @@
 <body>
   <header id="bar">
     <span class="brand">◈ Velarouter</span>
-    <span id="device" class="muted">连接中…</span>
+    <span id="device" class="muted">未连接</span>
     <select id="display" title="显示器" aria-label="显示器"></select>
     <span class="spacer"></span>
     <span id="stat" class="stat">—</span>
     <button id="btn-quality" title="画质">画质 70</button>
-    <button id="btn-fit" title="适应窗口">适应</button>
-    <button id="btn-full" title="全屏">全屏</button>
+    <button id="btn-fit" title="切换适应窗口与原始尺寸" aria-pressed="false">原始尺寸</button>
+    <button id="btn-full" title="全屏" hidden>全屏</button>
     <button id="btn-disconnect" title="断开">断开</button>
   </header>
 
   <main id="stage">
-    <canvas id="screen" tabindex="0" aria-label="远程桌面画面"></canvas>
+    <div id="viewport">
+      <canvas id="screen" tabindex="0" aria-label="远程桌面画面" inert></canvas>
+    </div>
     <div id="overlay">
       <div class="card" id="gate">
         <h1>连接到这台设备</h1>
-        <p class="muted">在“被控端”（Velarouter agent）窗口里查看 6 位配对码并输入。</p>
+        <p class="muted">输入被控电脑上显示的连接密码（命令行被控端称为配对码）。</p>
         <form id="gate-form">
-          <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12"
-                 placeholder="配对码" aria-label="配对码" autofocus />
+          <input id="code" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"
+                 placeholder="连接密码" aria-label="连接密码" required />
           <button type="submit">连接</button>
         </form>
         <p id="gate-error" class="error" role="alert"></p>
         <p class="hint muted">局域网直连：不经过任何服务器。画面与输入使用 P-256 + AES-256-GCM 端到端加密。</p>
       </div>
-      <div class="card hidden" id="status-card">
+      <div class="card hidden" id="status-card" role="status">
         <h1 id="status-title">正在握手…</h1>
         <p id="status-text" class="muted"></p>
-        <button id="btn-retry" class="hidden">重试</button>
+        <button id="btn-retry" class="hidden">返回连接</button>
       </div>
     </div>
   </main>

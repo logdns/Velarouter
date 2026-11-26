@@ -1,0 +1,13 @@
+[package]
+name = "vr-audio"
+description = "Experimental Linux system-audio capture and playback for Velarouter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+vr-proto = { path = "../vr-proto" }

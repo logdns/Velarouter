@@ -13,9 +13,11 @@ mod files;
 mod home;
 mod ime;
 mod network_status;
-mod reachability;
+mod recent;
 mod startup;
 mod theme;
+mod trust;
+mod wall;
 use std::collections::HashSet;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::mpsc::{Receiver, Sender};
@@ -32,6 +34,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::watch;
 use vr_agent::{AgentConfig, AgentEvent};
 use vr_client::Viewer;
+use vr_net::connection_code as reachability;
 use vr_proto::{
     modifiers as mods, ClipboardMsg, Control, DisplayInfo, InputEvent, MouseButton, Stats,
     TouchPhase, TouchPoint,
@@ -52,7 +55,9 @@ enum Target {
 }
 struct ConnectReq {
     target: Target,
+    entered_code: String,
     password: String,
+    viewer_identity: Option<vr_crypto::DeviceSigningKey>,
     brokers: Vec<String>,
     initial_size: (u16, u16),
 }
@@ -78,13 +83,23 @@ enum Cmd {
         /// Remote directory the file panel is showing ("" means the root).
         remote_dir: String,
     },
+    #[cfg(feature = "linux-audio")]
+    Audio(bool),
     Disconnect,
 }
 
 enum Ev {
     Connected {
+        entered_code: String,
         peer: String,
         transport: &'static str,
+        #[cfg(feature = "linux-audio")]
+        audio_available: bool,
+    },
+    #[cfg(feature = "linux-audio")]
+    AudioStatus {
+        active: bool,
+        message: String,
     },
     Displays(Vec<DisplayInfo>),
     Stats(Stats),
@@ -144,6 +159,7 @@ struct TransferView {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Home,
+    Wall,
     Connecting,
     Session,
 }
@@ -189,6 +205,7 @@ struct App {
     rt: tokio::runtime::Runtime,
     brand_icon: Option<TextureHandle>,
     home_tab: home::HomeTab,
+    wall: wall::Wall,
 
     cmd_tx: UnboundedSender<Cmd>,
     ev_rx: Receiver<Ev>,
@@ -196,6 +213,11 @@ struct App {
     page: Page,
     code_input: String,
     password_input: String,
+    recent: recent::History,
+    trust: trust::Trust,
+    viewer_identity: Option<vr_crypto::DeviceSigningKey>,
+    trust_draft: String,
+    trust_error: String,
     /// Extra rendezvous brokers; empty means the built-in public defaults.
     brokers: Vec<String>,
     broker_draft: String,
@@ -206,6 +228,15 @@ struct App {
     device_name: String,
     viewer_task: Option<tokio::task::JoinHandle<()>>,
     input_warning: String,
+    #[cfg(feature = "linux-audio")]
+    audio_available: bool,
+    #[cfg(feature = "linux-audio")]
+    audio_requested: bool,
+    #[cfg(feature = "linux-audio")]
+    audio_active: bool,
+    #[cfg(feature = "linux-audio")]
+    audio_message: String,
+    share_system_audio: bool,
     inbound: usize,
     joined_at: Option<std::time::Instant>,
     #[cfg(target_os = "linux")]
@@ -315,11 +346,17 @@ impl App {
             rt,
             brand_icon,
             home_tab: home::HomeTab::Share,
+            wall: wall::Wall::default(),
             cmd_tx,
             ev_rx,
             page: Page::Home,
             code_input: String::new(),
             password_input: String::new(),
+            recent: cfg.recent.clone(),
+            trust: cfg.trust.clone(),
+            viewer_identity: None,
+            trust_draft: String::new(),
+            trust_error: String::new(),
             name_draft: String::new(),
             brokers: cfg.brokers.split_whitespace().map(str::to_owned).collect(),
             broker_draft: cfg.brokers.clone(),
@@ -329,6 +366,15 @@ impl App {
             device_name: cfg.device_name.clone(),
             viewer_task: None,
             input_warning: String::new(),
+            #[cfg(feature = "linux-audio")]
+            audio_available: false,
+            #[cfg(feature = "linux-audio")]
+            audio_requested: false,
+            #[cfg(feature = "linux-audio")]
+            audio_active: false,
+            #[cfg(feature = "linux-audio")]
+            audio_message: String::new(),
+            share_system_audio: cfg.share_system_audio,
             inbound: 0,
             joined_at: None,
             #[cfg(target_os = "linux")]
@@ -426,6 +472,13 @@ impl App {
         if app.device_name.trim().is_empty() {
             app.device_name = vr_agent::default_device_name();
         }
+        match trust::load_or_create(&vr_agent::state_dir()) {
+            Ok(key) => app.viewer_identity = Some(key),
+            Err(error) => {
+                tracing::warn!(%error, "cannot load viewer identity");
+                app.trust_error = "无法读取或创建本机配对身份，请检查设置目录权限。".into();
+            }
+        }
         app.test_outbound();
         app.start_hosting();
         if !cfg.connect.trim().is_empty() {
@@ -520,6 +573,8 @@ impl App {
             signal_url: self.signal_url.clone(),
             online: None,
             fixed_code: Some(password),
+            trusted_viewers: self.trust.allowed(),
+            share_system_audio: self.share_system_audio,
             quality: 70,
             fps: 30,
             max_width: 1920,
@@ -666,6 +721,10 @@ impl App {
         }
     }
     fn open_settings(&mut self) {
+        if self.page == Page::Wall {
+            self.wall.clear();
+            self.page = Page::Home;
+        }
         if self.page == Page::Session {
             let _ = self.cmd_tx.send(Cmd::Input(InputEvent::ReleaseAll));
             self.held_keys.clear();
@@ -681,6 +740,29 @@ impl App {
     }
     // ---- viewer ------------------------------------------------------------
 
+    fn parse_target(&self, code: &str) -> Result<Target, &'static str> {
+        Ok(match reachability::parse(code)? {
+            reachability::Destination::Meet(code) => {
+                if self.hosting.enabled && code == self.hosting.internet_code {
+                    return Err("这是本机的联机码，请输入另一台设备的码。");
+                }
+                Target::Meet { code }
+            }
+            reachability::Destination::Signal(code) => {
+                let Some(base) = self.signal_url.clone() else {
+                    return Err("这是自建信令服务器的 9 位编码：请先在「设置 → 网络」里填写信令服务器地址。");
+                };
+                Target::Signal { base, code }
+            }
+            reachability::Destination::Direct(a)
+                if self.hosting.lan.iter().any(|v| SocketAddr::V4(*v) == a) =>
+            {
+                return Err("这是本机的联机码，请输入另一台设备的码。");
+            }
+            reachability::Destination::Direct(a) => Target::Direct(a),
+        })
+    }
+
     fn connect(&mut self) {
         self.home_tab = home::HomeTab::Connect;
         self.error.clear();
@@ -689,30 +771,10 @@ impl App {
             self.error = "请输入连接密码。".into();
             return;
         }
-        let target = match reachability::parse(&code) {
-            Ok(reachability::Destination::Meet(code)) => {
-                if self.hosting.enabled && code == self.hosting.internet_code {
-                    self.error = "这是本机的联机码，请输入另一台设备的码。".into();
-                    return;
-                }
-                Target::Meet { code }
-            }
-            Ok(reachability::Destination::Signal(code)) => {
-                let Some(base) = self.signal_url.clone() else {
-                    self.error = "这是自建信令服务器的 9 位编码：请先在「设置 → 网络」里填写信令服务器地址。".into();
-                    return;
-                };
-                Target::Signal { base, code }
-            }
-            Ok(reachability::Destination::Direct(a))
-                if self.hosting.lan.iter().any(|v| SocketAddr::V4(*v) == a) =>
-            {
-                self.error = "这是本机的联机码，请输入另一台设备的码。".into();
-                return;
-            }
-            Ok(reachability::Destination::Direct(a)) => Target::Direct(a),
-            Err(e) => {
-                self.error = e.into();
+        let target = match self.parse_target(&code) {
+            Ok(target) => target,
+            Err(error) => {
+                self.error = error.into();
                 return;
             }
         };
@@ -752,7 +814,9 @@ impl App {
         self.stats = Stats::default();
         let req = ConnectReq {
             target,
+            entered_code: code,
             password: self.password_input.clone(),
+            viewer_identity: self.viewer_identity.clone(),
             brokers: self.brokers.clone(),
             initial_size: self.target_size(),
         };
@@ -790,7 +854,22 @@ impl App {
     fn drain_viewer(&mut self) {
         while let Ok(ev) = self.ev_rx.try_recv() {
             match ev {
-                Ev::Connected { peer, transport } => {
+                Ev::Connected {
+                    entered_code,
+                    peer,
+                    transport,
+                    #[cfg(feature = "linux-audio")]
+                    audio_available,
+                } => {
+                    #[cfg(feature = "linux-audio")]
+                    {
+                        self.audio_available = audio_available;
+                        self.audio_requested = false;
+                        self.audio_active = false;
+                        self.audio_message.clear();
+                    }
+                    self.recent.record(&entered_code, &peer);
+                    self.dirty = true;
                     self.joined_at = Some(std::time::Instant::now());
                     self.page = Page::Session;
                     if let Ok(path) = std::env::var("VELAROUTER_AUTO_DOWNLOAD") {
@@ -819,6 +898,12 @@ impl App {
                     }
                     self.displays = list;
                     self.apply_video();
+                }
+                #[cfg(feature = "linux-audio")]
+                Ev::AudioStatus { active, message } => {
+                    self.audio_requested = active;
+                    self.audio_active = active;
+                    self.audio_message = message;
                 }
                 Ev::InputWarning(w) => self.input_warning = w,
                 Ev::ListError(message) => {
@@ -956,7 +1041,11 @@ impl eframe::App for App {
             && self.close_to_background
             && ctx.input(|i| i.viewport().close_requested())
         {
-            // Keep serving in the background instead of dropping the session.
+            // Background sharing must not leave wall previews running unseen.
+            if self.page == Page::Wall {
+                self.wall.clear();
+                self.page = Page::Home;
+            }
             // Guarded by `minimized` so a repeated request cannot flash the
             // window by minimising it over and over.
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -988,7 +1077,7 @@ impl eframe::App for App {
                 ui.horizontal_wrapped(|ui| {
                     if self.inbound > 0 {
                         ui.strong(format!(
-                            "远程操作已接入 · {} 个会话正在访问本机",
+                            "远程会话已接入 · {} 个会话正在访问本机",
                             self.inbound
                         ));
                         if ui.button("停止共享").clicked() {
@@ -1073,6 +1162,7 @@ impl eframe::App for App {
                 } else {
                     match self.page {
                         Page::Home => self.home_ui(ui),
+                        Page::Wall => self.wall_ui(ui),
                         Page::Connecting => self.connecting_ui(ui),
                         Page::Session => self.session_ui(ui),
                     }
@@ -1081,6 +1171,7 @@ impl eframe::App for App {
     }
 
     fn on_exit(&mut self) {
+        self.wall.clear();
         self.stop_hosting();
         // The tokio runtime shutdown waits for every blocking task (clipboard,
         // file IO). On Windows that turned "quit" into a freeze, so leave the
@@ -1093,6 +1184,9 @@ impl eframe::App for App {
             brokers: self.brokers.join(" "),
             device_name: self.device_name.clone(),
             internet_code: self.hosting.internet_code.clone(),
+            recent: self.recent.entries().to_vec(),
+            trust: self.trust.clone(),
+            share_system_audio: self.share_system_audio,
             autostart: Some(self.autostart),
             theme_preference: Some(self.theme_preference),
             start_minimized: self.start_minimized,
@@ -1245,6 +1339,32 @@ impl App {
                         }
                     }
                     self.display_controls(ui, rect.shrink(8.).size());
+                    #[cfg(feature = "linux-audio")]
+                    if self.audio_available {
+                        let label = if self.audio_active {
+                            "关闭声音"
+                        } else if self.audio_requested {
+                            "处理中…"
+                        } else {
+                            "开启声音"
+                        };
+                        if ui
+                            .add_enabled(
+                                !self.audio_requested || self.audio_active,
+                                egui::Button::new(label),
+                            )
+                            .clicked()
+                        {
+                            let enabled = !self.audio_active;
+                            self.audio_requested = true;
+                            self.audio_active = false;
+                            self.audio_message.clear();
+                            let _ = self.cmd_tx.send(Cmd::Audio(enabled));
+                        }
+                        if !self.audio_message.is_empty() {
+                            ui.weak(&self.audio_message);
+                        }
+                    }
                     ui.add_space(6.0);
                     if ui
                         .selectable_label(self.show_files, "文件")
@@ -1686,6 +1806,9 @@ struct Config {
     brokers: String,
     device_name: String,
     internet_code: String,
+    recent: recent::History,
+    trust: trust::Trust,
+    share_system_audio: bool,
     /// `--connect CODE` dials immediately after start-up.
     connect: String,
     /// `--password PASSWORD` pairs with `--connect`.
@@ -1735,6 +1858,12 @@ struct StoredConfig {
     #[serde(default)]
     internet_code: String,
     #[serde(default)]
+    recent: Vec<recent::Entry>,
+    #[serde(default)]
+    trust: trust::Trust,
+    #[serde(default)]
+    share_system_audio: bool,
+    #[serde(default)]
     autostart: Option<bool>,
     #[serde(default)]
     theme_preference: Option<egui::ThemePreference>,
@@ -1764,6 +1893,9 @@ impl From<StoredConfig> for Config {
             brokers: stored.brokers,
             device_name: stored.device_name,
             internet_code: stored.internet_code,
+            recent: recent::History::from_saved(stored.recent),
+            trust: stored.trust,
+            share_system_audio: stored.share_system_audio,
             connect: String::new(),
             password: String::new(),
             autostart: stored.autostart,
@@ -1860,6 +1992,71 @@ fn main() -> eframe::Result<()> {
 
 // ---- worker ---------------------------------------------------------------
 
+fn decode_jpeg(payload: &[u8]) -> Option<DecodedFrame> {
+    let rgba = image::load_from_memory_with_format(payload, image::ImageFormat::Jpeg)
+        .ok()?
+        .into_rgba8();
+    let (width, height) = rgba.dimensions();
+    Some(DecodedFrame {
+        width,
+        height,
+        rgba: rgba.into_raw(),
+    })
+}
+
+async fn dial(
+    target: Target,
+    password: &str,
+    brokers: &[String],
+    identity: Option<&vr_crypto::DeviceSigningKey>,
+    caps: vr_proto::Capabilities,
+    app: &str,
+) -> anyhow::Result<Viewer> {
+    let timeout = if matches!(target, Target::Direct(_)) {
+        8
+    } else {
+        55
+    };
+    tokio::time::timeout(Duration::from_secs(timeout), async {
+        match target {
+            Target::Direct(addr) => {
+                vr_client::connect_lan_with_identity(
+                    &format!("ws://{addr}/vr"),
+                    password,
+                    app,
+                    caps,
+                    identity,
+                )
+                .await
+            }
+            Target::Meet { code } => {
+                vr_client::connect_meet_with_identity(&code, password, brokers, app, caps, identity)
+                    .await
+            }
+            Target::Signal { base, code } => {
+                vr_client::connect_p2p_with_identity(&base, &code, password, app, caps, identity)
+                    .await
+            }
+        }
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("连接超时，请确认对方仍在共享，并检查双方网络。"))?
+}
+
+fn connection_error(error: &anyhow::Error) -> String {
+    match error.downcast_ref::<vr_session::SessionError>() {
+        Some(vr_session::SessionError::Rejected(reason))
+            if reason == vr_session::UNTRUSTED_VIEWER_REASON =>
+        {
+            "对方仅允许可信设备。请在两台电脑的「设置 → 权限」中完成配对。".into()
+        }
+        Some(vr_session::SessionError::Auth(_) | vr_session::SessionError::Rejected(_)) => {
+            "连接未通过认证，请核对密码和对方的连接权限。".into()
+        }
+        _ => format!("没能建立连接，请检查联机码、共享状态和网络。\n{error:#}"),
+    }
+}
+
 async fn worker(
     req: ConnectReq,
     mut cmd_rx: tokio::sync::mpsc::UnboundedReceiver<Cmd>,
@@ -1874,60 +2071,28 @@ async fn worker(
     let mut caps = vr_client::default_capabilities();
     caps.max_width = 3840;
     caps.max_height = 2160;
-    let connected = match req.target {
-        Target::Direct(addr) => {
-            tokio::time::timeout(
-                Duration::from_secs(8),
-                vr_client::connect_lan(
-                    &format!("ws://{addr}/vr"),
-                    &req.password,
-                    "velarouter-desktop/0.1",
-                    caps,
-                ),
-            )
-            .await
-        }
-        Target::Meet { code } => {
-            tokio::time::timeout(
-                Duration::from_secs(55),
-                vr_client::connect_meet(
-                    &code,
-                    &req.password,
-                    &req.brokers,
-                    "velarouter-desktop/0.2",
-                    caps,
-                ),
-            )
-            .await
-        }
-        Target::Signal { base, code } => {
-            tokio::time::timeout(
-                Duration::from_secs(55),
-                vr_client::connect_p2p(&base, &code, &req.password, "velarouter-desktop/0.2", caps),
-            )
-            .await
-        }
-    };
-    let connected = match connected {
-        Ok(r) => r,
-        Err(_) => {
-            send(Ev::Error(
-                "网络错误 · 连接超时。请确认对方仍在共享，并检查端口映射、防火墙或 UDP 限制。"
-                    .into(),
-            ));
-            return;
-        }
-    };
-    let mut viewer: Viewer = match connected {
-        Ok(v) => v,
-        Err(e) => {
-            let hint = match e.downcast_ref::<vr_session::SessionError>() {
-                Some(vr_session::SessionError::Auth(_) | vr_session::SessionError::Rejected(_)) => {
-                    "密码不对，或对方已更换密码。请让对方重新念一遍当前密码。"
-                }
-                _ => "没能建立连接。请确认对方仍在共享、联机码没有过期，并且两边都能访问互联网。",
-            };
-            send(Ev::Error(format!("{hint}\n{e:#}")));
+    #[cfg(feature = "linux-audio")]
+    {
+        caps.audio = vr_audio::playback_available().await;
+    }
+    #[cfg(feature = "linux-audio")]
+    let local_audio = caps.audio;
+    #[cfg(feature = "h264")]
+    caps.codecs.push(vr_proto::Codec::H264);
+    let local_codecs = caps.codecs.clone();
+    let mut viewer = match dial(
+        req.target,
+        &req.password,
+        &req.brokers,
+        req.viewer_identity.as_ref(),
+        caps,
+        "velarouter-desktop/0.2",
+    )
+    .await
+    {
+        Ok(viewer) => viewer,
+        Err(error) => {
+            send(Ev::Error(connection_error(&error)));
             return;
         }
     };
@@ -1938,15 +2103,40 @@ async fn worker(
         .map(|d| d.name.clone())
         .unwrap_or_else(|| "远端设备".into());
     send(Ev::Connected {
+        entered_code: req.entered_code,
         peer: peer_name,
         transport: viewer.transport,
+        #[cfg(feature = "linux-audio")]
+        audio_available: local_audio && viewer.peer.capabilities.audio,
     });
 
     let (max_w, max_h) = req.initial_size;
-    if let Err(e) = vr_client::request_video(&mut viewer, 70, 30, 0, max_w, max_h).await {
+    let codec = vr_video::capture_codec(
+        vr_proto::Codec::H264,
+        &viewer.peer.capabilities.codecs,
+        &local_codecs,
+    );
+    #[cfg(feature = "h264")]
+    let mut decoder = vr_video::h264::SoftwareDecoder::default();
+    let initial_video = vr_proto::VideoConfig {
+        codec,
+        max_width: max_w,
+        max_height: max_h,
+        ..Default::default()
+    };
+    if let Err(e) = viewer
+        .sender
+        .send_control(Control::VideoConfig(initial_video))
+        .await
+    {
         send(Ev::Error(format!("{e:#}")));
         return;
     }
+
+    #[cfg(feature = "linux-audio")]
+    let mut playback: Option<vr_audio::Playback> = None;
+    #[cfg(feature = "linux-audio")]
+    let mut audio_requested = false;
 
     // ---- file transfers ---------------------------------------------------
     let mut next_transfer: u32 = 1;
@@ -1967,7 +2157,7 @@ async fn worker(
                     Some(Cmd::Video { quality, fps, display, max_w, max_h }) => {
                         let (max_width, max_height) = (max_w, max_h);
                         if let Err(e) = viewer.sender.send_control(Control::VideoConfig(vr_proto::VideoConfig {
-                            codec: vr_proto::Codec::Jpeg,
+                            codec,
                             quality, fps, max_width, max_height, display,
                         })).await { send(Ev::Closed(e.to_string())); break; }
                     }
@@ -2037,10 +2227,34 @@ async fn worker(
                             })),
                         }
                     }
+                    #[cfg(feature = "linux-audio")]
+                    Some(Cmd::Audio(enabled)) => {
+                        if !local_audio || !viewer.peer.capabilities.audio { continue; }
+                        audio_requested = enabled;
+                        if !enabled {
+                            playback = None;
+                        }
+                        if let Err(error) = viewer.sender.send_control(Control::AudioRequest { enabled }).await {
+                            send(Ev::Closed(error.to_string())); break;
+                        }
+                    }
                     Some(Cmd::Disconnect) | None => {
                         let _ = viewer.sender.send_control(Control::Bye { reason: "desktop closed".into() }).await;
                         break;
                     }
+                }
+            }
+            _ = async {
+                #[cfg(feature = "linux-audio")]
+                if let Some(output) = &mut playback { output.finished().await; return; }
+                std::future::pending::<()>().await;
+            } => {
+                #[cfg(feature = "linux-audio")]
+                {
+                    audio_requested = false;
+                    playback = None;
+                    send(Ev::AudioStatus { active: false, message: "本地声音播放已停止，画面仍可继续。".into() });
+                    let _ = viewer.sender.send_control(Control::AudioRequest { enabled: false }).await;
                 }
             }
             chunk = async {
@@ -2086,14 +2300,49 @@ async fn worker(
             }
             ev = viewer.receiver.recv_auto_pong(&mut viewer.sender) => {
                 match ev {
-                    Ok(Event::Media { header: _, payload }) => {
-                        match image::load_from_memory_with_format(&payload, image::ImageFormat::Jpeg) {
-                            Ok(img) => {
-                                let rgba = img.to_rgba8();
-                                let (w, h) = rgba.dimensions();
-                                *latest.lock().unwrap()=Some(DecodedFrame { width:w,height:h,rgba:rgba.into_raw() }); ctx.request_repaint();
+                    Ok(Event::Media { header, payload }) => {
+                        let frame = match header.codec {
+                            vr_proto::Codec::Jpeg => {
+                                #[cfg(feature = "h264")]
+                                decoder.reset();
+                                decode_jpeg(&payload)
                             }
-                            Err(_) => continue,
+                            #[cfg(feature = "h264")]
+                            vr_proto::Codec::H264 if codec == vr_proto::Codec::H264 => match decoder.decode(header, &payload) {
+                                Ok(Some(rgba)) => Some(DecodedFrame { width: u32::from(header.width), height: u32::from(header.height), rgba }),
+                                Ok(None) => None,
+                                Err(_) => { decoder.reset(); None }
+                            },
+                            _ => None,
+                        };
+                        if let Some(frame) = frame {
+                            *latest.lock().unwrap() = Some(frame);
+                            ctx.request_repaint();
+                        }
+                    }
+                    #[cfg(feature = "linux-audio")]
+                    Ok(Event::Audio(pcm)) if audio_requested => {
+                        if let Some(output) = &playback { output.push(pcm); }
+                    }
+                    #[cfg(feature = "linux-audio")]
+                    Ok(Event::Control(Control::AudioStatus { active, message })) => {
+                        if active && audio_requested {
+                            if playback.is_none() {
+                                match vr_audio::Playback::start() {
+                                    Ok(output) => playback = Some(output),
+                                    Err(_) => {
+                                        audio_requested = false;
+                                        let _ = viewer.sender.send_control(Control::AudioRequest { enabled: false }).await;
+                                        send(Ev::AudioStatus { active: false, message: "无法播放远端声音。".into() });
+                                        continue;
+                                    }
+                                }
+                            }
+                            send(Ev::AudioStatus { active: true, message });
+                        } else if !active {
+                            audio_requested = false;
+                            playback = None;
+                            send(Ev::AudioStatus { active: false, message });
                         }
                     }
                     Ok(Event::Control(Control::DisplayList { displays })) => {
@@ -2191,7 +2440,7 @@ async fn worker(
                             error: Some(message),
                         }));
                     }
-                    Ok(Event::Control(_)) | Ok(Event::Pong { .. }) => {}
+                    Ok(Event::Control(_) | Event::Pong { .. } | Event::Audio(_)) => {}
                     Ok(Event::File { header, payload }) => {
                         if let Some(state) = download.as_mut().filter(|d| d.id == header.transfer_id) {
                             match state.write(&payload).await {

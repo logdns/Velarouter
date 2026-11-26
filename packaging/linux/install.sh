@@ -5,6 +5,9 @@ cd "$(dirname "$0")"
 data=${XDG_DATA_HOME:-$HOME/.local/share}
 bin="$HOME/.local/bin/Velarouter"
 install -Dm755 Velarouter "$bin"
+for cli in velarouter velarouter-view; do
+    install -Dm755 "$cli" "$HOME/.local/bin/$cli"
+done
 for size in 48 128 256; do
     install -Dm644 "Velarouter-$size.png" "$data/icons/hicolor/${size}x${size}/apps/Velarouter.png"
 done

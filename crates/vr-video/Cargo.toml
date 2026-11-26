@@ -1,0 +1,16 @@
+[package]
+name = "vr-video"
+description = "Velarouter software video codec helpers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+h264 = ["dep:openh264", "dep:anyhow"]
+
+[dependencies]
+vr-proto = { path = "../vr-proto" }
+anyhow = { workspace = true, optional = true }
+openh264 = { version = "0.9.10", optional = true }

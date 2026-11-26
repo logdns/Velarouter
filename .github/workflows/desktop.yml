@@ -52,7 +52,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker buildx build --platform '${{ matrix.platform }}' -f packaging/linux/Dockerfile --output type=local,dest=dist .
       - run: cd dist && sha256sum -c ./*.sha256
-      - run: bash scripts/test-linux-package.sh dist/*.deb dist/*.tar.gz
+      - name: Check installed binaries and desktop entries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgbm1 libxcb1 libpipewire-0.3-0t64 libxkbcommon0 libxkbcommon-x11-0 desktop-file-utils
+          bash scripts/test-linux-package.sh dist/*.deb dist/*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-linux-${{ matrix.arch }}
@@ -79,13 +83,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release already exists; leaving it untouched."
             exit 0
           fi
           version=${TAG#v}
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          grep -Fx "version = \"$version\"" Cargo.toml
           paths=("Velarouter-${version}-arm64.dmg" "Velarouter-${version}-windows-x64.zip" "Velarouter-${version}-linux-x86_64.tar.gz" "Velarouter-${version}-linux-aarch64.tar.gz" "Velarouter-${version}-linux-amd64.deb" "Velarouter-${version}-linux-arm64.deb")
           (cd dist && sha256sum "${paths[@]}" > SHA256SUMS.txt)
           assets=()
           for path in "${paths[@]}"; do assets+=("dist/$path"); done
-          gh release create "$TAG" "${assets[@]}" dist/SHA256SUMS.txt --verify-tag --draft --generate-notes
+          gh release create "$TAG" "${assets[@]}" dist/SHA256SUMS.txt --verify-tag --draft \
+            --title "Velarouter $version" --notes-file "docs/releases/$TAG.md"

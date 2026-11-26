@@ -83,6 +83,10 @@ pub struct AgentConfig {
     pub online: Option<(String, String)>,
     /// `None` generates a new 6-digit code on every start.
     pub fixed_code: Option<String>,
+    /// None allows password-only sessions. Some(empty) denies all viewers.
+    pub trusted_viewers: Option<Vec<vr_crypto::DevicePublicKey>>,
+    /// Host-side opt-in; never implies microphone capture.
+    pub share_system_audio: bool,
     pub quality: u8,
     pub fps: u8,
     pub max_width: u16,
@@ -109,6 +113,8 @@ impl Default for AgentConfig {
             signal_url: None,
             online: None,
             fixed_code: None,
+            trusted_viewers: None,
+            share_system_audio: false,
             quality: 70,
             fps: 30,
             max_width: 1920,
@@ -288,7 +294,11 @@ pub(crate) fn save_identity(dir: &PathBuf, identity: &Identity) -> Result<()> {
 
 pub fn agent_capabilities() -> Capabilities {
     Capabilities {
-        codecs: vec![Codec::Jpeg],
+        codecs: vec![
+            Codec::Jpeg,
+            #[cfg(feature = "h264")]
+            Codec::H264,
+        ],
         max_width: 3840,
         max_height: 2160,
         max_fps: 60,
@@ -351,6 +361,12 @@ pub async fn run_with_events(
         tags: vec!["agent".into()],
     };
     let files = files::FileService::new(&config.files_root)?;
+    let caps = agent_capabilities();
+    #[cfg(feature = "linux-audio")]
+    let caps = Capabilities {
+        audio: config.share_system_audio && vr_audio::capture_available().await,
+        ..caps
+    };
     let state = Arc::new(AgentState {
         events: events.clone(),
         #[cfg(target_os = "linux")]
@@ -360,7 +376,7 @@ pub async fn run_with_events(
         secret: secret.clone(),
         config: config.clone(),
         displays: displays.clone(),
-        caps: agent_capabilities(),
+        caps,
         files,
     });
 
@@ -497,6 +513,26 @@ pub async fn run_with_events(
     // The signal loop persists its own identity as soon as it registers.
     let _ = &identity;
     Ok(())
+}
+
+/// All inbound paths pass through this gate. Cancel pending authentication
+/// when hosting is paused/restarted, including detached upgrade/invite tasks.
+pub(crate) async fn accept_viewer(
+    state: &AgentState,
+    channel: Box<dyn vr_transport::MessageChannel>,
+    cfg: vr_session::SessionConfig,
+) -> Result<vr_session::Session, vr_session::SessionError> {
+    let mut shutdown = state.config.shutdown.clone();
+    tokio::select! {
+        biased;
+        _ = async {
+            match shutdown.as_mut() {
+                Some(rx) => { let _ = rx.wait_for(|stopped| *stopped).await; }
+                None => std::future::pending::<()>().await,
+            }
+        } => Err(vr_session::SessionError::Closed),
+        result = vr_session::Session::accept_with_trust(channel, cfg, state.config.trusted_viewers.as_deref()) => result,
+    }
 }
 
 /// Small helper shared by the LAN server and the relay client: build the agent
