@@ -11,7 +11,7 @@
 
 1. 核对 `Cargo.toml` 与 `Cargo.lock` 的版本，准备 `docs/releases/vX.Y.Z.md`。只有已验证内容才写进发布说明。签名、实验开关和未验收平台继续明确标注。
 2. 推送 `main` 后检查 **Checks** 和 **GitHub Pages**。本地可用 `actionlint`、`shellcheck`；Actions 的审计包含 RustSec、govulncheck、npm audit 和提交快照的密钥扫描。RustSec 的未维护警告要记录并维护替换计划，不能当作第三方安全认证。
-3. 检查通过后推送新标签（如 `v0.1.3`）。**Desktop packages** 重新执行检查并原生构建 macOS ARM64、Windows x64、Linux amd64/arm64；不会覆盖已有发布。未打标签时可手动运行仅构建产物。
+3. 检查通过后推送新标签（如 `v0.1.4`）。**Desktop packages** 重新执行检查并原生构建 macOS ARM64、Windows x64、Linux amd64/arm64；不会覆盖已有发布。未打标签时可手动运行仅构建产物。
 4. 下载草稿资产核对六个包与 `SHA256SUMS.txt`。macOS 校验 DMG 和 App 签名；Windows 验证 ZIP 和命令行入口；Linux 验证 DEB/便携包的程序、版本、启动项及图标一致。按 [Linux 实机清单](clients/LINUX-ACCEPTANCE.md)记录能完成的现场测试，再公开草稿。
 5. 公开后复查 [Releases](https://github.com/logdns/Velarouter/releases/latest)、[Pages](https://2sb.org/Velarouter/) 和下载哈希。回退时优先引导使用已知可用的旧版，不改写已发布标签或替换原有包；修复用新版本。信令部署单独维护，不由站点或桌面发布触发。
 

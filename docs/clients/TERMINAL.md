@@ -2,7 +2,7 @@
 
 `velarouter-view` 在支持 ANSI 的交互式终端中用字符显示远端桌面。它独立构建，不依赖桌面 GUI；本地键鼠不会发送到远端，不同步剪贴板，不传文件，不播放声音，也不会保存画面。
 
-从 0.1.3 起随标准安装包分发：Linux DEB 可直接运行 `velarouter-view`，便携包在解压目录使用 `./velarouter-view`；macOS 在 `/Applications/Velarouter.app/Contents/MacOS/`；Windows 在 ZIP 的 `tools` 目录。`velarouter` 运维工具位于同一目录。
+从 0.1.4 起随标准安装包分发：Linux DEB 可直接运行 `velarouter-view`，便携包在解压目录使用 `./velarouter-view`；macOS 在 `/Applications/Velarouter.app/Contents/MacOS/`；Windows 在 ZIP 的 `tools` 目录。`velarouter` 运维工具位于同一目录。
 
 也可单独从源码构建：
 

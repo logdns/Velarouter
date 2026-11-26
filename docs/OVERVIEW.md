@@ -14,9 +14,9 @@ Velarouter 是局域网优先、无需账号的开源加密远程桌面。主控
 
 ## 客户端与能力
 
-- **桌面**：macOS Apple Silicon、Windows x64、Linux x86_64 / ARM64。画面、键鼠、文本剪贴板、多屏、在指定共享目录内收发文件。0.1.3 加入最近连接、可选可信设备限制和四路只读桌面墙。权限依赖操作系统；见[桌面指南](clients/DESKTOP-APP.md)。
-- **Web**：随被控端提供，支持局域网浏览和操作；0.1.3 改善窄屏与单指操作。与桌面能力不同，不是原生 iOS / Android 应用。
-- **终端与 CLI**：0.1.3 的 `velarouter-view` 可在 ANSI 终端只读预览；`velarouter` 提供探测、抓帧、文件传输及运维等命令。两者随安装包分发，见[终端指南](clients/TERMINAL.md)。
+- **桌面**：macOS Apple Silicon、Windows x64、Linux x86_64 / ARM64。画面、键鼠、文本剪贴板、多屏、在指定共享目录内收发文件。0.1.4 加入最近连接、可选可信设备限制和四路只读桌面墙。权限依赖操作系统；见[桌面指南](clients/DESKTOP-APP.md)。
+- **Web**：随被控端提供，支持局域网浏览和操作；0.1.4 改善窄屏与单指操作。与桌面能力不同，不是原生 iOS / Android 应用。
+- **终端与 CLI**：0.1.4 的 `velarouter-view` 可在 ANSI 终端只读预览；`velarouter` 提供探测、抓帧、文件传输及运维等命令。两者随安装包分发，见[终端指南](clients/TERMINAL.md)。
 
 Linux 音频与 H.264 软件编解码为可选源码试验；标准安装包不包含这两项。尚未验收的功能不视为现有支持，详见[功能与状态](FEATURES.md)和[路线图](ROADMAP.md)。
 

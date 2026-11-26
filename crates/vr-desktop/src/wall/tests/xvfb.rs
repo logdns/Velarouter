@@ -53,7 +53,7 @@ async fn wall_xvfb_four_previews() {
             secret: "ephemeral-test-password".into(),
             displays: displays.clone(),
             caps: caps.clone(),
-            files: FileService::new(&tmp.path().join(index.to_string())).unwrap(),
+            files: FileService::new(tmp.path().join(index.to_string())).unwrap(),
             events: Some(events.clone()),
             portal: None,
         });
