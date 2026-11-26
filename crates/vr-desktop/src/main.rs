@@ -552,6 +552,7 @@ impl App {
         self.ipv6_listener = false;
         self.hosting.enabled = false;
         self.hosting.ready = false;
+        self.hosting.lan.clear();
         self.hosting.internet = Internet::Idle;
     }
     fn drain_agent(&mut self) {

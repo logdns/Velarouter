@@ -4,7 +4,7 @@
 
 局域网优先的加密远程桌面。两台电脑装同一个客户端，用联机码和密码连接，无需注册账号。
 
-**[下载安装](https://github.com/logdns/Velarouter/releases/latest)** · **[项目主页](https://github.com/logdns/Velarouter)** · **[使用指南](docs/clients/DESKTOP-APP.md)**
+**[下载安装](https://github.com/logdns/Velarouter/releases/latest)** · **[项目主页](https://logdns.github.io/Velarouter/)** · **[使用指南](docs/clients/DESKTOP-APP.md)**
 
 | 系统 | 下载后怎么用 |
 |---|---|

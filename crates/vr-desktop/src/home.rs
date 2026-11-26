@@ -210,7 +210,11 @@ impl App {
             ui.add_space(2.0);
 
             if !self.hosting.enabled {
-                ui.label("共享已暂停。点击「开始共享」后即可接收连接。");
+                if self.hosting.error.is_empty() {
+                    ui.label("共享已暂停。点击「开始共享」后即可接收连接。");
+                } else {
+                    ui.colored_label(theme::DANGER, &self.hosting.error);
+                }
                 return;
             } else {
                 let code = self.hosting.internet_code.clone();
