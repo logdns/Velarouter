@@ -12,6 +12,19 @@
 | Windows x64 | 解压 ZIP，运行 `Velarouter.exe`。 |
 | Linux x86_64 / ARM64 | 按 `uname -m` 选包，解包后运行 `./install.sh` 安装应用菜单。 |
 
+## 客户端截图
+
+![Velarouter 桌面首页：左侧显示本机共享信息，右侧是连接表单](site/screenshots/desktop-home.png)
+
+<details>
+<summary>查看窄窗口：通过顶部页签切换</summary>
+
+![Velarouter 窄窗口：顶部有本机共享、连接电脑和局域网页签，当前显示连接表单](site/screenshots/desktop-compact.png)
+
+</details>
+
+截图使用演示设备和联机码。
+
 ## 怎么连接
 
 1. 在**被控电脑**打开 Velarouter，将「本机共享」里的联机码和密码发给你信任的人。
