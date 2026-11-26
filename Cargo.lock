@@ -5846,7 +5846,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "velarouter"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -5913,7 +5913,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vr-agent"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5951,7 +5951,7 @@ dependencies = [
 
 [[package]]
 name = "vr-audio"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "tokio",
@@ -5960,7 +5960,7 @@ dependencies = [
 
 [[package]]
 name = "vr-client"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -5979,7 +5979,7 @@ dependencies = [
 
 [[package]]
 name = "vr-crypto"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -5995,7 +5995,7 @@ dependencies = [
 
 [[package]]
 name = "vr-desktop"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -6028,7 +6028,7 @@ dependencies = [
 
 [[package]]
 name = "vr-meet"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -6047,7 +6047,7 @@ dependencies = [
 
 [[package]]
 name = "vr-net"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "if-addrs",
  "serde",
@@ -6061,7 +6061,7 @@ dependencies = [
 
 [[package]]
 name = "vr-p2p"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6078,7 +6078,7 @@ dependencies = [
 
 [[package]]
 name = "vr-proto"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "base64 0.23.1",
  "crc32fast",
@@ -6089,7 +6089,7 @@ dependencies = [
 
 [[package]]
 name = "vr-session"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -6108,7 +6108,7 @@ dependencies = [
 
 [[package]]
 name = "vr-signal"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -6133,7 +6133,7 @@ dependencies = [
 
 [[package]]
 name = "vr-terminal"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -6149,7 +6149,7 @@ dependencies = [
 
 [[package]]
 name = "vr-transport"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "bytes",
@@ -6161,7 +6161,7 @@ dependencies = [
 
 [[package]]
 name = "vr-video"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "openh264",

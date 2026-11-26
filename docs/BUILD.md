@@ -70,7 +70,7 @@ H.264 与声音可独立启用。可选后端验收：安装 `pulseaudio` 后，
 
 ## 发布与网站
 
-- 推送与桌面 Cargo 版本一致的标签（如 `v0.1.2`）会触发 `desktop` 工作流。构建和测试成功后将生成 **草稿发布**及 SHA-256；核对安装包，再公开草稿。
+- 推送与桌面 Cargo 版本一致的标签（如 `v0.1.3`）会触发 `desktop` 工作流。构建和测试成功后将生成 **草稿发布**及 SHA-256；核对安装包，再公开草稿。
 - 从 [Releases](https://github.com/logdns/Velarouter/releases/latest) 下载安装包和 `SHA256SUMS.txt`，在同一目录运行 `shasum -a 256 -c SHA256SUMS.txt`（Linux 也可用 `sha256sum -c SHA256SUMS.txt`）。
 - 安装包同时包含 `velarouter` 运维工具和 `velarouter-view` 终端只读客户端；位置见[终端指南](clients/TERMINAL.md)。
 - `site/` 是静态项目主页，不托管远程桌面服务。在本地运行 `python3 -m http.server --directory site` 后可预览；推送到 `main` 会通过 GitHub Actions 发布。线上地址以[仓库 Pages 设置](https://github.com/logdns/Velarouter/settings/pages)为准。

@@ -183,7 +183,7 @@ ffmpeg -f x11grab -framerate 30 -video_size 1920x1080 -i :0.0 \
 
 ### 6.1 安装与图标
 
-Ubuntu / Debian 上优先使用 `.deb`（`amd64` 或 `arm64`），例如 `sudo apt install ./Velarouter-0.1.2-linux-arm64.deb`。从应用菜单搜索 Velarouter，再固定到 Dock。
+Ubuntu / Debian 上优先使用 `.deb`（`amd64` 或 `arm64`），例如 `sudo apt install ./Velarouter-0.1.3-linux-arm64.deb`。从应用菜单搜索 Velarouter，再固定到 Dock。
 
 便携包 `.tar.gz`：解包后运行 `./install.sh`，无需 sudo；它将应用、菜单入口和 48/128/256 px 图标安装到当前用户目录。文件管理器仍可能给解压目录中的裸 ELF 显示通用齿轮。
 

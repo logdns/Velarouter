@@ -1,6 +1,6 @@
 # 文档
 
-- **入门**：[项目介绍](OVERVIEW.md) · [0.1.2 发布说明](releases/v0.1.2.md)
+- **入门**：[项目介绍](OVERVIEW.md) · [0.1.3 发布说明](releases/v0.1.3.md)
 - **使用**：[桌面安装、连接与排障](clients/DESKTOP-APP.md) · [当前功能与借鉴清单](FEATURES.md) · [终端只读预览](clients/TERMINAL.md)
 - **构建**：[本地测试、打包与发布](BUILD.md) · [维护闭环](MAINTAINER.md)
 - **自建服务**：[信令部署](DEPLOYMENT.md) · [会合与 NAT](RENDEZVOUS.md) · [安全说明](SECURITY.md)

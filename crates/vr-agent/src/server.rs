@@ -271,14 +271,14 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
                     sender.send_control(Control::Warning {code: if allowed {"input_ready"} else {"input"}.into(), message: if allowed {"系统已允许远程交互"} else {"被控端已结束远程交互授权"}.into() }).await?;
                 }
             }
-            packet = async {
+            _audio_event = async {
                 #[cfg(feature = "linux-audio")]
                 return audio.next().await;
                 #[cfg(not(feature = "linux-audio"))]
                 std::future::pending::<()>().await
             } => {
                 #[cfg(feature = "linux-audio")]
-                match packet {
+                match _audio_event {
                     AudioEvent::Packet(pcm) => {
                         if let Err(error) = sender.send_audio(&pcm).await { break Err(error.into()); }
                     }
@@ -286,8 +286,7 @@ pub async fn run_session(session: Session, state: Arc<AgentState>) -> Result<()>
                         if let Err(error) = sender.send_control(status).await { break Err(error.into()); }
                     }
                 }
-                #[cfg(not(feature = "linux-audio"))]
-                let _ = packet;
+
             }
             frame = frame_rx.recv() => {
                 match frame {
