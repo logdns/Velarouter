@@ -185,6 +185,7 @@ struct App {
     ctx: egui::Context,
     #[cfg(target_os = "linux")]
     linux_theme: watch::Receiver<Option<egui::Theme>>,
+    theme_preference: egui::ThemePreference,
     rt: tokio::runtime::Runtime,
     brand_icon: Option<TextureHandle>,
     home_tab: home::HomeTab,
@@ -282,7 +283,7 @@ struct App {
 
 impl App {
     fn with_config(ctx: &egui::Context, cfg: &Config, rt: tokio::runtime::Runtime) -> Self {
-        ctx.set_theme(egui::ThemePreference::System);
+        let theme_preference = theme::configure(ctx, cfg.theme_preference);
         theme::apply(ctx);
         let brand_icon = eframe::icon_data::from_png_bytes(include_bytes!(
             "../../../assets/brand/png/appicon/velarouter-128.png"
@@ -310,6 +311,7 @@ impl App {
             held_buttons: Default::default(),
             #[cfg(target_os = "linux")]
             linux_theme: watch::channel(None).1,
+            theme_preference,
             rt,
             brand_icon,
             home_tab: home::HomeTab::Share,
@@ -1092,6 +1094,7 @@ impl eframe::App for App {
             device_name: self.device_name.clone(),
             internet_code: self.hosting.internet_code.clone(),
             autostart: Some(self.autostart),
+            theme_preference: Some(self.theme_preference),
             start_minimized: self.start_minimized,
             close_to_background: self.close_to_background,
             firewall_offered: self.firewall_offered,
@@ -1689,6 +1692,7 @@ struct Config {
     password: String,
     /// Launch at login. Defaults to on for packaged builds.
     autostart: Option<bool>,
+    theme_preference: Option<egui::ThemePreference>,
     /// Open the window minimised (only the menu-bar / tray icon shows).
     start_minimized: bool,
     /// Closing the window keeps sharing in the background instead of quitting.
@@ -1733,6 +1737,8 @@ struct StoredConfig {
     #[serde(default)]
     autostart: Option<bool>,
     #[serde(default)]
+    theme_preference: Option<egui::ThemePreference>,
+    #[serde(default)]
     start_minimized: bool,
     #[serde(default)]
     close_to_background: bool,
@@ -1761,6 +1767,7 @@ impl From<StoredConfig> for Config {
             connect: String::new(),
             password: String::new(),
             autostart: stored.autostart,
+            theme_preference: stored.theme_preference,
             start_minimized: stored.start_minimized,
             close_to_background: stored.close_to_background,
             firewall_offered: stored.firewall_offered,

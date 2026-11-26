@@ -102,7 +102,7 @@ assets/brand/
 │   └── og-image-1200x630.png       Open Graph / 分享卡
 ```
 
-所有位图都由 SVG 生成，改标志只需改 SVG 后重跑脚本（见 §9）。Linux 包不引入独立图标格式：`install.sh` 把 `png/appicon/velarouter-{48,128,256}.png` 安装到 hicolor 主题，并以 `Icon=Velarouter` 关联 `.desktop`。
+所有位图都由 SVG 生成，改标志只需改 SVG 后重跑脚本（见 §9）。Linux 的 `.deb` 以及便携安装脚本都将 48/128/256 px 品牌 PNG 安装到 hicolor 主题，并以 `Icon=Velarouter` 关联与窗口 ID 同名的 `Velarouter.desktop`。
 
 ---
 

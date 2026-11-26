@@ -402,6 +402,23 @@ impl App {
     }
 
     fn settings_device(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("界面主题").size(19.0).strong());
+        let previous = self.theme_preference;
+        ui.horizontal_wrapped(|ui| {
+            for (preference, label) in [
+                (egui::ThemePreference::Light, "浅色"),
+                (egui::ThemePreference::Dark, "深色"),
+                (egui::ThemePreference::System, "跟随系统"),
+            ] {
+                ui.selectable_value(&mut self.theme_preference, preference, label);
+            }
+        });
+        if previous != self.theme_preference {
+            ui.ctx().set_theme(self.theme_preference);
+            ui.ctx().request_repaint();
+            self.dirty = true;
+        }
+        ui.add_space(12.0);
         ui.label(RichText::new("设备名称").size(19.0).strong());
         ui.label(
             RichText::new("连接成功后，对方会在会话标题里看到这个名字。")

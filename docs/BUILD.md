@@ -38,10 +38,10 @@ docker buildx build --platform linux/amd64 -f packaging/linux/Dockerfile.cross-a
 docker buildx build --platform linux/arm64 -f packaging/linux/Dockerfile --output type=local,dest=dist .
 ```
 
-Linux 包为动态链接程序。无法启动时，用 `ldd ./Velarouter` 检查缺失库，并对照包内 `libraries.txt`。
+每种架构生成 `.deb`（Ubuntu / Debian，注册应用菜单和图标）及 `.tar.gz`（便携安装）。Linux 仍是动态链接程序；如无法启动，用 `ldd` 检查缺失库，并对照便携包的 `libraries.txt`。
 
 ## 发布与网站
 
 - 推送与桌面 Cargo 版本一致的标签（如 `v0.1.0`）会触发 `desktop` 工作流。构建和测试成功后将生成 **草稿发布**及 SHA-256；核对安装包，再公开草稿。
-- 从 [Releases](https://github.com/logdns/Velarouter/releases/latest) 下载四个桌面包和 `SHA256SUMS.txt`，在同一目录运行 `shasum -a 256 -c SHA256SUMS.txt`（Linux 也可用 `sha256sum -c SHA256SUMS.txt`）。
+- 从 [Releases](https://github.com/logdns/Velarouter/releases/latest) 下载安装包和 `SHA256SUMS.txt`，在同一目录运行 `shasum -a 256 -c SHA256SUMS.txt`（Linux 也可用 `sha256sum -c SHA256SUMS.txt`）。
 - `site/` 是静态项目主页，不托管远程桌面服务。在本地运行 `python3 -m http.server --directory site` 后可预览；推送到 `main` 会通过 GitHub Actions 发布。线上地址以[仓库 Pages 设置](https://github.com/logdns/Velarouter/settings/pages)为准。

@@ -10,7 +10,7 @@
 |---|---|
 | macOS（Apple Silicon） | 打开 `.dmg`，将 Velarouter 拖到「应用程序」。 |
 | Windows x64 | 解压 ZIP，运行 `Velarouter.exe`。 |
-| Linux x86_64 / ARM64 | 按 `uname -m` 选包，解包后运行 `./install.sh` 安装应用菜单。 |
+| Linux x86_64 / ARM64 | Ubuntu / Debian 优先安装 `.deb`（`amd64` / `arm64`），再从应用菜单启动。其他发行版用 `.tar.gz` 内的 `./install.sh`。 |
 
 ## 客户端截图
 

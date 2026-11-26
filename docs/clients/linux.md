@@ -5,7 +5,7 @@
 
 ---
 
-本项目可构建 Linux x86_64 / aarch64 原生客户端，两种架构的打包、下载与运行说明见[构建指南](../BUILD.md#linux)。当前发布物是 tar.gz，不是 AppImage、Flatpak 或系统服务；包内 `install.sh` 负责安装当前用户的应用菜单、Dock 图标和 `.desktop` 项。
+本项目可构建 Linux x86_64 / aarch64 原生客户端，两种架构的打包、下载与运行说明见[构建指南](../BUILD.md#linux)。Ubuntu / Debian 提供原生 `.deb`；也提供 `.tar.gz`，其中的 `install.sh` 可为当前用户安装菜单入口和图标。
 
 ## 1. 两条完全不同的路径
 
@@ -181,21 +181,16 @@ ffmpeg -f x11grab -framerate 30 -video_size 1920x1080 -i :0.0 \
 
 ## 6. 打包与分发
 
-### 6.1 当前产物与可选格式
+### 6.1 安装与图标
 
-当前发布物是 `Velarouter-0.1.0-linux-<arch>.tar.gz`：
+Ubuntu / Debian 上优先使用 `.deb`（`amd64` 或 `arm64`），例如 `sudo apt install ./Velarouter-0.1.1-linux-arm64.deb`。从应用菜单搜索 Velarouter，再固定到 Dock。
 
-```sh
-./install.sh                 # 安装到 ~/.local/bin、应用菜单和 hicolor 图标
-./Velarouter                 # 也可直接从解包目录运行
-```
-
-`install.sh` 不写系统目录、不需要 sudo；它把 48/128/256 px 品牌图标和 `.desktop` 项装到当前用户目录。直接运行二进制时窗口图标来自内嵌资源，但应用菜单/Dock 图标需要安装后才能稳定关联。
+便携包 `.tar.gz`：解包后运行 `./install.sh`，无需 sudo；它将应用、菜单入口和 48/128/256 px 图标安装到当前用户目录。文件管理器仍可能给解压目录中的裸 ELF 显示通用齿轮。
 
 | 可选格式 | 适用 | 备注 |
 |---|---|---|
 | AppImage | 通用、免安装 | 体积大，需自带 WebKitGTK |
-| `.deb` / `.rpm` | 企业分发 | 依赖系统 WebKitGTK |
+| `.rpm` | RPM 系发行版 | 目前未提供 |
 | Flatpak | 桌面商店 | 需要 portal 权限声明 |
 
 Flatpak 的 `finish-args`（被控端）：

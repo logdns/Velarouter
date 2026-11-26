@@ -51,11 +51,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: docker buildx build --platform '${{ matrix.platform }}' -f packaging/linux/Dockerfile --output type=local,dest=dist .
-      - run: cd dist && sha256sum -c ./*.tar.gz.sha256
+      - run: cd dist && sha256sum -c ./*.sha256
+      - run: bash scripts/test-linux-package.sh dist/*.deb dist/*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: desktop-linux-${{ matrix.arch }}
-          path: dist/Velarouter-*-linux-${{ matrix.arch }}.tar.gz
+          path: |
+            dist/Velarouter-*-linux-${{ matrix.arch }}.tar.gz
+            dist/Velarouter-*-linux-*.deb
           if-no-files-found: error
 
   release:
@@ -81,7 +84,7 @@ jobs:
             exit 0
           fi
           version=${TAG#v}
-          paths=("Velarouter-${version}-arm64.dmg" "Velarouter-${version}-windows-x64.zip" "Velarouter-${version}-linux-x86_64.tar.gz" "Velarouter-${version}-linux-aarch64.tar.gz")
+          paths=("Velarouter-${version}-arm64.dmg" "Velarouter-${version}-windows-x64.zip" "Velarouter-${version}-linux-x86_64.tar.gz" "Velarouter-${version}-linux-aarch64.tar.gz" "Velarouter-${version}-linux-amd64.deb" "Velarouter-${version}-linux-arm64.deb")
           (cd dist && sha256sum "${paths[@]}" > SHA256SUMS.txt)
           assets=()
           for path in "${paths[@]}"; do assets+=("dist/$path"); done

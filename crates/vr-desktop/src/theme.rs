@@ -69,6 +69,21 @@ pub fn accent(ui: &egui::Ui) -> Color32 {
     }
 }
 
+pub fn configure(
+    ctx: &egui::Context,
+    saved: Option<egui::ThemePreference>,
+) -> egui::ThemePreference {
+    let preference = saved.unwrap_or(if cfg!(target_os = "linux") {
+        egui::ThemePreference::Light
+    } else {
+        egui::ThemePreference::System
+    });
+    #[cfg(target_os = "linux")]
+    ctx.options_mut(|options| options.fallback_theme = egui::Theme::Light);
+    ctx.set_theme(preference);
+    preference
+}
+
 #[cfg(target_os = "linux")]
 pub fn watch_linux(
     rt: &tokio::runtime::Runtime,
@@ -100,6 +115,39 @@ pub fn watch_linux(
         }
     });
     rx
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod preference_tests {
+    use super::*;
+
+    #[test]
+    fn new_and_existing_linux_configs_default_to_light_but_respect_a_saved_choice() {
+        let ctx = egui::Context::default();
+        let set_system = |system_theme| {
+            ctx.options_mut(|options| {
+                options.begin_pass(&egui::RawInput {
+                    system_theme,
+                    ..Default::default()
+                });
+            });
+        };
+        set_system(Some(egui::Theme::Dark));
+        let old = serde_json::from_str::<crate::StoredConfig>(r#"{"device_name":"PC"}"#).unwrap();
+        assert_eq!(old.theme_preference, None);
+        assert_eq!(
+            configure(&ctx, old.theme_preference),
+            egui::ThemePreference::Light
+        );
+        assert_eq!(ctx.theme(), egui::Theme::Light);
+
+        configure(&ctx, Some(egui::ThemePreference::Dark));
+        assert_eq!(ctx.theme(), egui::Theme::Dark);
+        configure(&ctx, Some(egui::ThemePreference::System));
+        assert_eq!(ctx.theme(), egui::Theme::Dark);
+        set_system(None);
+        assert_eq!(ctx.theme(), egui::Theme::Light);
+    }
 }
 
 pub fn apply(ctx: &egui::Context) {
