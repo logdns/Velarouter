@@ -1,0 +1,23 @@
+# Native compiler with Debian amd64 runtime/headers; avoids running GCC under QEMU.
+FROM rust:1.95-bookworm AS sysroot
+WORKDIR /src
+COPY scripts/linux-build-deps.sh scripts/
+RUN bash scripts/linux-build-deps.sh
+
+FROM --platform=$BUILDPLATFORM rust:1.95-bookworm AS build
+WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends gcc-x86-64-linux-gnu g++-x86-64-linux-gnu clang libclang-dev cmake pkg-config python3 && rustup target add x86_64-unknown-linux-gnu
+COPY --from=sysroot /usr /opt/amd64/usr
+COPY --from=sysroot /etc /opt/amd64/etc
+RUN cd /opt/amd64 && ln -s usr/lib lib && ln -s usr/lib64 lib64 && ln -sfn ../lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 usr/lib64/ld-linux-x86-64.so.2 && mkdir -p tmp && printf '#!/bin/sh\nexec x86_64-linux-gnu-gcc --sysroot=/opt/amd64 "$@"\n' > /usr/local/bin/vr-link-amd64 && chmod +x /usr/local/bin/vr-link-amd64
+ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=vr-link-amd64     CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc CXX_x86_64_unknown_linux_gnu=x86_64-linux-gnu-g++     CFLAGS_x86_64_unknown_linux_gnu="--sysroot=/opt/amd64" CXXFLAGS_x86_64_unknown_linux_gnu="--sysroot=/opt/amd64"     PKG_CONFIG_SYSROOT_DIR_x86_64_unknown_linux_gnu=/opt/amd64     PKG_CONFIG_LIBDIR_x86_64_unknown_linux_gnu=/opt/amd64/usr/lib/x86_64-linux-gnu/pkgconfig:/opt/amd64/usr/share/pkgconfig     BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_gnu="--target=x86_64-linux-gnu --sysroot=/opt/amd64"     VR_LINUX_ARCH=x86_64 VR_SYSROOT=/opt/amd64
+COPY Cargo.lock Cargo.toml LICENSE ./
+COPY crates crates
+COPY assets assets
+COPY webviewer webviewer
+COPY docs/clients/DESKTOP-APP.md docs/clients/
+COPY packaging/linux/Velarouter.desktop packaging/linux/install.sh packaging/linux/
+COPY scripts/package-linux.sh scripts/
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/src/target bash scripts/package-linux.sh
+FROM scratch
+COPY --from=build /src/dist/ /

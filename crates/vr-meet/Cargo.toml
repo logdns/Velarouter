@@ -1,0 +1,25 @@
+[package]
+name = "vr-meet"
+description = "Velarouter rendezvous: discover a peer behind NAT over a public broker, no server to deploy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vr-crypto = { path = "../vr-crypto" }
+vr-net = { path = "../vr-net" }
+tokio.workspace = true
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+base64.workspace = true
+rand.workspace = true
+sha2.workspace = true
+url = "2"
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -1,0 +1,14 @@
+/target
+/re
+/analysis/
+*.apk
+*.exe
+*.pkg
+.DS_Store
+/.playwright-mcp/
+/*.deb
+/sdk/go/velarouter-smoke
+/dist
+/.env
+/packaging/signal/.env*
+/webviewer/node_modules/

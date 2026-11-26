@@ -1,0 +1,32 @@
+name: velarouter-signal
+services:
+  signal:
+    build:
+      context: ../..
+      dockerfile: packaging/signal/Dockerfile
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      VELAROUTER_PUBLIC_URL: https://${SIGNAL_DOMAIN:?domain required}
+      VELAROUTER_ADMIN_TOKEN: ${VELAROUTER_ADMIN_TOKEN:?token required}
+    ports:
+      - "34791:34791/udp"
+      - "34792:34792/udp"
+  caddy:
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    depends_on: [signal]
+    environment:
+      SIGNAL_DOMAIN: ${SIGNAL_DOMAIN:?domain required}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - config:/config
+volumes:
+  certificates: {}
+  config: {}

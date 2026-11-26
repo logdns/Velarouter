@@ -1,0 +1,45 @@
+[package]
+name = "vr-agent"
+description = "Velarouter agent: screen capture, input injection, LAN server and relay client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vr-proto = { path = "../vr-proto" }
+vr-crypto = { path = "../vr-crypto" }
+socket2.workspace = true
+vr-net = { path = "../vr-net" }
+vr-session = { path = "../vr-session" }
+vr-p2p = { path = "../vr-p2p" }
+vr-meet = { path = "../vr-meet" }
+vr-transport = { path = "../vr-transport" }
+
+axum = { version = "0.8", features = ["ws"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+rand.workspace = true
+base64.workspace = true
+sha2.workspace = true
+futures-util = "0.3"
+async-trait = "0.1"
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
+url = "2"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+xcap = "0.9"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+igd-next = { version = "0.18", features = ["aio_tokio"] }
+enigo = "0.6"
+arboard = { version = "3", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.14", default-features = false, features = ["async-io", "remote_desktop", "screencast"] }
+xkeysym = "0.2"
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Velarouter · 远程画面</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230b0d10'/%3E%3Cpath d='M8 16h16M16 8v16' stroke='%234f8cff' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header id="bar">
+    <span class="brand">◈ Velarouter</span>
+    <span id="device" class="muted">连接中…</span>
+    <select id="display" title="显示器" aria-label="显示器"></select>
+    <span class="spacer"></span>
+    <span id="stat" class="stat">—</span>
+    <button id="btn-quality" title="画质">画质 70</button>
+    <button id="btn-fit" title="适应窗口">适应</button>
+    <button id="btn-full" title="全屏">全屏</button>
+    <button id="btn-disconnect" title="断开">断开</button>
+  </header>
+
+  <main id="stage">
+    <canvas id="screen" tabindex="0" aria-label="远程桌面画面"></canvas>
+    <div id="overlay">
+      <div class="card" id="gate">
+        <h1>连接到这台设备</h1>
+        <p class="muted">在“被控端”（Velarouter agent）窗口里查看 6 位配对码并输入。</p>
+        <form id="gate-form">
+          <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="12"
+                 placeholder="配对码" aria-label="配对码" autofocus />
+          <button type="submit">连接</button>
+        </form>
+        <p id="gate-error" class="error" role="alert"></p>
+        <p class="hint muted">局域网直连：不经过任何服务器。画面与输入使用 P-256 + AES-256-GCM 端到端加密。</p>
+      </div>
+      <div class="card hidden" id="status-card">
+        <h1 id="status-title">正在握手…</h1>
+        <p id="status-text" class="muted"></p>
+        <button id="btn-retry" class="hidden">重试</button>
+      </div>
+    </div>
+  </main>
+
+  <footer id="foot">
+    <span>画面 <b id="fps">0</b> fps</span>
+    <span><b id="kbps">0</b> kbps</span>
+    <span>RTT <b id="rtt">—</b> ms</span>
+    <span id="resolution">—</span>
+    <span class="spacer"></span>
+    <span class="muted">端到端加密 · 局域网直连</span>
+  </footer>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

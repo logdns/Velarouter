@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vr-proto",
+    "crates/vr-crypto",
+    "crates/vr-transport",
+    "crates/vr-net",
+    "crates/vr-session",
+    "crates/vr-p2p",
+    "crates/vr-meet",
+    "crates/vr-client",
+    "crates/vr-desktop",
+    "crates/vr-signal",
+    "crates/vr-agent",
+    "crates/velarouter",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+license = "Apache-2.0"
+repository = "https://github.com/logdns/Velarouter"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bytes = "1"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+base64 = "0.23"
+rand = "0.10"
+sha2 = "0.11"
+hmac = "0.13"
+hkdf = "0.13"
+aes-gcm = "0.11"
+p256 = { version = "0.14", features = ["ecdh"] }
+subtle = "2"
+crc32fast = "1"
+socket2 = "0.6"
+clap = { version = "4", features = ["derive", "env"] }

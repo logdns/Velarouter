@@ -1,0 +1,21 @@
+[package]
+name = "vr-client"
+description = "Velarouter viewer SDK: LAN and P2P session establishment"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vr-proto = { path = "../vr-proto" }
+vr-session = { path = "../vr-session" }
+vr-p2p = { path = "../vr-p2p" }
+vr-meet = { path = "../vr-meet" }
+vr-transport = { path = "../vr-transport" }
+tokio.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+url = "2"
+uuid.workspace = true

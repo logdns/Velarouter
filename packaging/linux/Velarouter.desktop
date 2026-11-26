@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Velarouter
+Comment=Remote desktop and file transfer
+Comment[zh_CN]=远程桌面与文件互传
+Exec=Velarouter
+Icon=Velarouter
+StartupWMClass=Velarouter
+Terminal=false
+Categories=Network;RemoteAccess;

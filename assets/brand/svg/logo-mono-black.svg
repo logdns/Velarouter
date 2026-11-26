@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 400" role="img" aria-label="Velarouter">
+  <g fill="#0B0D10" stroke="#0B0D10">
+    <path d="M306 336 L512 700 L718 336" fill="none" stroke-width="104" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="306" cy="336" r="34" fill="none" stroke-width="20"/>
+    <circle cx="306" cy="336" r="12" stroke="none"/>
+    <circle cx="718" cy="336" r="34" fill="none" stroke-width="20"/>
+    <circle cx="718" cy="336" r="12" stroke="none"/>
+    <circle cx="512" cy="700" r="40" stroke="none"/>
+  </g>
+  <text x="400" y="214" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
+        font-size="132" font-weight="700" letter-spacing="-3" fill="#0B0D10">Velarouter</text>
+</svg>

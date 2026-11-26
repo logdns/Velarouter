@@ -1,0 +1,88 @@
+name: Desktop packages
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup override set 1.95.0
+      - run: bash scripts/package-macos.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-macos
+          path: dist/Velarouter-*-arm64.dmg
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup override set 1.95.0
+      - shell: powershell
+        run: ./packaging/windows/build.ps1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-windows
+          path: dist/Velarouter-*-windows-x64.zip
+          if-no-files-found: error
+
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker buildx build --platform '${{ matrix.platform }}' -f packaging/linux/Dockerfile --output type=local,dest=dist .
+      - run: cd dist && sha256sum -c ./*.tar.gz.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-linux-${{ matrix.arch }}
+          path: dist/Velarouter-*-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, macos, windows, linux]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-*
+          path: dist
+          merge-multiple: true
+      - name: Verify tag, checksums and stage draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists; leaving it untouched."
+            exit 0
+          fi
+          version=${TAG#v}
+          paths=("Velarouter-${version}-arm64.dmg" "Velarouter-${version}-windows-x64.zip" "Velarouter-${version}-linux-x86_64.tar.gz" "Velarouter-${version}-linux-aarch64.tar.gz")
+          (cd dist && sha256sum "${paths[@]}" > SHA256SUMS.txt)
+          assets=()
+          for path in "${paths[@]}"; do assets+=("dist/$path"); done
+          gh release create "$TAG" "${assets[@]}" dist/SHA256SUMS.txt --verify-tag --draft --generate-notes

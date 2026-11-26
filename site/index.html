@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Velarouter 是局域网优先的加密远程桌面，支持 macOS、Windows 和 Linux。">
+  <title>Velarouter · 加密远程桌面</title>
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <p class="brand"><img src="icon.png" alt="" width="64" height="64"> Velarouter</p>
+      <h1>输入联机码，连接远程桌面</h1>
+      <p class="intro">两台电脑装同一个客户端，用联机码和密码连接。局域网不需要服务器，也不需要注册账号。</p>
+      <nav class="links" aria-label="项目链接">
+        <a class="download" href="https://github.com/logdns/Velarouter/releases/latest">下载最新版</a>
+        <a href="https://github.com/logdns/Velarouter">GitHub 仓库</a>
+      </nav>
+    </header>
+    <section aria-labelledby="install">
+      <h2 id="install">选择你的系统</h2>
+      <ul class="platforms">
+        <li><h3>macOS</h3><p>Apple Silicon · DMG。拖入「应用程序」。安装包未公证。</p></li>
+        <li><h3>Windows</h3><p>x64 · ZIP。解压后运行 <code>Velarouter.exe</code>，无需安装。</p></li>
+        <li><h3>Linux</h3><p>x86_64 / ARM64 · TAR.GZ。解包后运行 <code>./install.sh</code>，无需 sudo。</p></li>
+      </ul>
+    </section>
+    <section aria-labelledby="connect">
+      <h2 id="connect">怎么连接</h2>
+      <ol>
+        <li>在被控电脑打开 Velarouter，将联机码和密码发给你信任的人。</li>
+        <li>在主控电脑输入这两项。同一局域网优先使用 <code>VR-…</code> 码。</li>
+        <li>结束访问时，在被控电脑点击「停止共享」或「暂停共享」。</li>
+      </ol>
+      <p>部分网络无法跨网直连，默认不会自动中继。<a href="https://github.com/logdns/Velarouter/blob/main/docs/clients/DESKTOP-APP.md">查看权限设置和排障指南</a>。</p>
+    </section>
+    <footer>Velarouter · <a href="https://github.com/logdns/Velarouter/blob/main/LICENSE">Apache-2.0</a></footer>
+  </main>
+</body>
+</html>

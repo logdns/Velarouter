@@ -1,0 +1,30 @@
+[package]
+name = "vr-signal"
+description = "Velarouter signal server: device registry, pairing, session brokering, encrypted relay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vr-proto = { path = "../vr-proto" }
+vr-net = { path = "../vr-net" }
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.7", features = ["cors", "trace"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+rand.workspace = true
+futures-util = "0.3"
+subtle.workspace = true
+
+[dev-dependencies]
+vr-client = { path = "../vr-client" }
+vr-session = { path = "../vr-session" }
+vr-p2p = { path = "../vr-p2p" }
+tokio-tungstenite = "0.30"

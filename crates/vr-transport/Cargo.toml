@@ -1,0 +1,18 @@
+[package]
+name = "vr-transport"
+description = "Velarouter transport: stream framing, UDP fragmentation, duplex message channels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+async-trait = "0.1"
+tracing.workspace = true
+vr-proto = { path = "../vr-proto" }
+
+[dev-dependencies]
+tokio = { workspace = true }

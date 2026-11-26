@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 400" role="img" aria-label="Velarouter">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3D7BF0"/>
+      <stop offset="1" stop-color="#2FA78A"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(60 60) scale(0.2734375)">
+    <path d="M214 452c-34 46-52 100-52 150" fill="none" stroke="url(#g)"
+          stroke-opacity="0.45" stroke-width="26" stroke-linecap="round"/>
+    <path d="M176 402c-46 62-70 132-70 200" fill="none" stroke="url(#g)"
+          stroke-opacity="0.22" stroke-width="22" stroke-linecap="round"/>
+    <path d="M306 336 L512 700 L718 336" fill="none" stroke="url(#g)"
+          stroke-width="104" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="306" cy="336" r="34" fill="none" stroke="#2FA78A" stroke-width="20"/>
+    <circle cx="306" cy="336" r="12" fill="#2FA78A"/>
+    <circle cx="718" cy="336" r="34" fill="none" stroke="#3D7BF0" stroke-width="20"/>
+    <circle cx="718" cy="336" r="12" fill="#3D7BF0"/>
+    <circle cx="512" cy="700" r="86" fill="none" stroke="url(#g)" stroke-width="18" stroke-opacity="0.6"/>
+    <circle cx="512" cy="700" r="40" fill="#0B0D10"/>
+  </g>
+
+  <text x="400" y="214" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
+        font-size="132" font-weight="700" letter-spacing="-3" fill="#0B0D10">Velarouter</text>
+  <text x="404" y="272" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
+        font-size="34" font-weight="500" letter-spacing="2.4" fill="#5B6B7F">REMOTE DESKTOP, ONE HOP AWAY</text>
+</svg>

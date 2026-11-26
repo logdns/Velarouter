@@ -1,0 +1,336 @@
+openapi: 3.1.0
+info:
+  title: Velarouter Signal API
+  version: 1.0.0
+  description: |
+    设备注册、配对、会话撮合与加密中继的信令接口。
+
+    服务器**不参与密钥协商**，也**不解析媒体**。中继只转发带 1 字节前缀的密文帧。
+    WebSocket 端点（`/v1/agent/ws`、`/v1/session/ws`）不在本文档中描述，见
+    `docs/SIGNALING.md`。
+  license:
+    name: Apache-2.0
+servers:
+  - url: https://signal.example.com
+    description: 生产
+  - url: http://127.0.0.1:34790
+    description: 本地
+
+tags:
+  - name: health
+  - name: devices
+  - name: sessions
+
+paths:
+  /v1/health:
+    get:
+      tags: [health]
+      summary: 健康检查
+      responses:
+        "200":
+          description: 服务状态
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, version, uptime_secs, devices, sessions]
+                properties:
+                  ok: { type: boolean }
+                  version: { type: integer, example: 1 }
+                  uptime_secs: { type: integer, example: 812 }
+                  devices: { type: integer, example: 3 }
+                  sessions: { type: integer, example: 1 }
+
+  /v1/devices:
+    post:
+      tags: [devices]
+      summary: 注册被控端
+      description: 返回设备 ID 与长期 token。token 只返回一次，必须持久化。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, example: Studio }
+                platform: { type: string, example: macos-aarch64 }
+                version: { type: string, example: 0.1.0 }
+                tags:
+                  type: array
+                  items: { type: string }
+                  example: [agent]
+      responses:
+        "200":
+          description: 注册成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [device_id, token]
+                properties:
+                  device_id: { type: string, format: uuid }
+                  token: { type: string, description: 192 bit 十六进制 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    get:
+      tags: [devices]
+      summary: 列出设备
+      description: 需要 admin token 或任一设备 token。响应不含任何 token。
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 设备列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DeviceInfo" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /v1/devices/{id}/pairing:
+    post:
+      tags: [devices]
+      summary: 设置/刷新配对码
+      description: 被控端每 120 秒调用一次，避免配对码在会话中途过期。
+      security:
+        - deviceToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string, minLength: 4, maxLength: 128, example: "123456" }
+      responses:
+        "200":
+          description: 已设置
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  ttl_secs: { type: integer, example: 300 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/devices/{id}:
+    delete:
+      tags: [devices]
+      summary: 注销设备
+      security:
+        - deviceToken: []
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: 已删除
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sessions:
+    post:
+      tags: [sessions]
+      summary: 创建会话（主控端）
+      description: |
+        校验配对码后创建会话，并向在线被控端推送 `{"t":"invite", ...}`。
+        配对码错误与过期返回同样的 403，避免枚举。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id]
+              properties:
+                device_id: { type: string, format: uuid }
+                pairing_code: { type: string, example: "123456" }
+                viewer_name: { type: string, example: "Alice 的 MacBook" }
+      responses:
+        "200":
+          description: 会话已创建
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session_id, token, ws_path]
+                properties:
+                  session_id: { type: string, format: uuid }
+                  token: { type: string }
+                  ws_path:
+                    type: string
+                    example: /v1/session/ws?session_id=…&token=…&role=viewer
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sessions/{id}:
+    get:
+      tags: [sessions]
+      summary: 查询会话状态
+      security:
+        - sessionToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: 状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id: { type: string, format: uuid }
+                  state:
+                    type: string
+                    enum: [pending, accepted, active, closed]
+                  viewer: { type: string }
+                  lan_hints:
+                    type: array
+                    items: { type: string }
+                  udp_port: { type: integer, nullable: true }
+                  age_secs: { type: integer }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [sessions]
+      summary: 主动结束会话
+      security:
+        - sessionToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: 已结束
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /v1/sessions/{id}/accept:
+    post:
+      tags: [sessions]
+      summary: 接受会话（被控端）
+      security:
+        - deviceToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lan_hints:
+                  type: array
+                  items: { type: string }
+                  example: ["ws://192.168.1.10:34789/vr"]
+                udp_port: { type: integer, nullable: true }
+      responses:
+        "200":
+          description: 已接受
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: 管理员令牌（`VELAROUTER_ADMIN_TOKEN`）
+    deviceToken:
+      type: http
+      scheme: bearer
+      description: `POST /v1/devices` 返回的长期设备 token
+    sessionToken:
+      type: http
+      scheme: bearer
+      description: `POST /v1/sessions` 返回的单次会话 token
+
+  schemas:
+    DeviceInfo:
+      type: object
+      required: [device_id, name, platform, version]
+      properties:
+        device_id: { type: string, format: uuid }
+        name: { type: string }
+        platform: { type: string, example: windows-x86_64 }
+        version: { type: string }
+        tags:
+          type: array
+          items: { type: string }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [bad_request, unauthorized, forbidden, not_found]
+            message: { type: string }
+
+  responses:
+    BadRequest:
+      description: 参数错误
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: 缺失或错误的令牌
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: 配对码错误或过期
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }

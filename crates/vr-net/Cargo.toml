@@ -1,0 +1,20 @@
+[package]
+name = "vr-net"
+description = "Velarouter networking: LAN discovery, reflexive address detection, UDP hole punching"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+if-addrs = "0.15"
+socket2.workspace = true
+vr-proto = { path = "../vr-proto" }
+
+[dev-dependencies]
+tokio = { workspace = true }
